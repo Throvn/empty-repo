@@ -23,18 +23,17 @@ let engine = null;
 
 async function init() {
   const t0 = performance.now();
-  const [wasm, data, meta, fmt, diff] = await Promise.all([
+  const [wasm, data, meta, fmt] = await Promise.all([
     fetchBytes('pdftex.wasm', 'pdfTeX engine'),
     fetchBytes('texlive.data', 'TeX Live support files'),
     fetch('texlive.json').then(r => r.json()),
     fetchBytes('pdflatex.fmt', 'LaTeX format'),
-    fetchBytes('diff.wasm', 'snapshot helper').catch(() => null),
   ]);
   const fs = new HostFS();
   fs.addPack(data, meta);
   fs.addSystemFile('fmt/pdflatex.fmt', fmt);
-  engine = await TexEngine.create({ wasm, fs, diffWasm: diff, env: { SOURCE_DATE_EPOCH: undefined } });
-  postMessage({ type: 'ready', ms: performance.now() - t0, simd: !!engine.snapper.diff,
+  engine = await TexEngine.create({ wasm, fs, env: {} });
+  postMessage({ type: 'ready', ms: performance.now() - t0, simd: engine.snapper.useShadow,
                 wasmKB: wasm.length >> 10, packMB: +(data.length / 1048576).toFixed(1) });
 }
 
@@ -43,10 +42,17 @@ onmessage = async ev => {
   try {
     if (m.type === 'init') await init();
     else if (m.type === 'compile') {
-      const r = engine.compile(m.files, { main: m.main || 'main.tex', maxPasses: m.maxPasses ?? 3, incremental: m.incremental });
-      const pdf = r.pdf ? r.pdf.slice() : null;   // transfer a copy: the engine keeps its cached result
-      r.pdf = null;
-      postMessage({ type: 'result', id: m.id, ...r, pdf }, pdf ? [pdf.buffer] : []);
+      // One LaTeX pass at a time: show the first result immediately, then keep refining cross-references
+      // (each further pass resumes from the snapshot before the first changed .aux read).
+      const t0 = performance.now();
+      for (let pass = 0; pass < (m.maxPasses ?? 3); pass++) {
+        const r = engine.compile(m.files, { main: m.main || 'main.tex', maxPasses: 1, incremental: m.incremental });
+        const final = r.converged || pass === (m.maxPasses ?? 3) - 1;
+        const pdf = r.pdf ? r.pdf.slice() : null;      // transfer a copy: the engine keeps its cached result
+        r.pdf = null;
+        postMessage({ type: 'result', id: m.id, ...r, pdf, final, pass, ms: performance.now() - t0 }, pdf ? [pdf.buffer] : []);
+        if (final) break;
+      }
     }
   } catch (e) {
     postMessage({ type: 'error', id: m.id, message: String(e && e.stack || e) });

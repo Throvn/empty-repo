@@ -1,0 +1,52 @@
+# Reproducible pdfTeX -> WebAssembly pipeline.   `make`  builds everything into build/web
+# (each step is an idempotent script in scripts/; build/ is the only place anything is written)
+SHELL := /bin/bash
+STAMP := build/.stamps
+
+all: web
+$(STAMP):
+	@mkdir -p $@
+
+toolchain: $(STAMP)/toolchain
+$(STAMP)/toolchain: scripts/00-toolchain.sh scripts/env.sh | $(STAMP)
+	scripts/00-toolchain.sh && touch $@
+
+sources: $(STAMP)/sources
+$(STAMP)/sources: scripts/10-fetch-sources.sh | $(STAMP)
+	scripts/10-fetch-sources.sh && touch $@
+
+native: $(STAMP)/native                       # web2c on the host: WEB -> C
+$(STAMP)/native: $(STAMP)/sources scripts/20-native-gen.sh
+	scripts/20-native-gen.sh && touch $@
+
+wasm: $(STAMP)/wasm                           # build/web/pdftex.wasm
+$(STAMP)/wasm: $(STAMP)/toolchain $(STAMP)/native scripts/30-build-wasm.sh $(wildcard src/*.c src/*.h src/shim/*.h)
+	scripts/30-build-wasm.sh && touch $@
+
+texlive: $(STAMP)/texlive                     # build/web/texlive.data (+ texlive.json)
+$(STAMP)/texlive: $(STAMP)/toolchain scripts/40-texlive-files.sh scripts/tools/mkmap.py | $(STAMP)
+	scripts/40-texlive-files.sh && touch $@
+
+fmt: $(STAMP)/fmt                             # build/web/pdflatex.fmt, dumped by the wasm engine itself
+$(STAMP)/fmt: $(STAMP)/wasm $(STAMP)/texlive scripts/60-build-fmt.mjs
+	node scripts/60-build-fmt.mjs && touch $@
+
+web: $(STAMP)/web
+$(STAMP)/web: $(STAMP)/fmt $(wildcard web/*.js web/*.html) scripts/70-package-web.sh
+	scripts/70-package-web.sh && touch $@
+
+test: web
+	node tests/incremental.mjs && node tests/errors.mjs
+
+bench: web
+	node tests/bench.mjs
+
+serve: web
+	cd build/web && python3 -m http.server 8000
+
+clean:
+	rm -rf build/wasm build/web build/.stamps
+distclean:
+	rm -rf build
+
+.PHONY: all toolchain sources native wasm texlive fmt web test bench serve clean distclean

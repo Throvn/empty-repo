@@ -42,6 +42,7 @@
   <label><input type="checkbox" id="incr" checked> incremental (TeXpresso-style snapshots)</label>
   <button id="long" title="a 60-section document: watch incremental compilation skip the unchanged prefix">Load long sample</button>
   <a id="dl" download="main.pdf" hidden><button>Download PDF</button></a>
+  <button id="stop" hidden title="TeX seems stuck (infinite loop?): kill the worker and restart the engine">Stop</button>
   <span id="status">loading…</span>
 </header>
 <main>
@@ -104,23 +105,32 @@ const src = $('src'), statusEl = $('status'), logEl = $('log');
 const view = new PdfView($('view'));
 src.value = localStorage.getItem('pdftex-wasm-src') || SAMPLE;
 
-const worker = new Worker('worker.js', { type: 'module' });
-let ready = false, busy = false, dirty = false, nextId = 1, lastUrl = null;
+let worker, ready = false, busy = false, dirty = false, nextId = 1, lastUrl = null, watchdog = null;
+let autoCompile = true;
+function startWorker() {
+  ready = false; busy = false; dirty = false; $('compile').disabled = true;
+  worker = new Worker('worker.js', { type: 'module' });
+  worker.onerror = e => setStatus(`<span class="err">worker error: ${e.message}</span>`);
+  worker.onmessage = onMessage;
+  worker.postMessage({ type: 'init' });
+}
 
 const setStatus = html => { statusEl.innerHTML = html; };
-worker.onerror = e => setStatus(`<span class="err">worker error: ${e.message}</span>`);
-worker.onmessage = async ev => {
+async function onMessage(ev) {
   const m = ev.data;
+  if (m.type === 'error' || (m.type === 'result' && m.final)) { clearTimeout(watchdog); $('stop').hidden = true; }
+  else if (m.type === 'result') { clearTimeout(watchdog); watchdog = setTimeout(() => { $('stop').hidden = false; }, 8000); }
   if (m.type === 'progress') setStatus(m.text);
   else if (m.type === 'ready') {
     ready = true; $('compile').disabled = false;
     setStatus(`engine ready (${(m.ms / 1000).toFixed(1)} s load, ${m.wasmKB} KB wasm + ${m.packMB} MB TeX files${m.simd ? ', SIMD snapshots' : ''})`);
-    compile();
+    if (autoCompile) compile(); else setStatus(statusEl.textContent + ' — restarted; edit or press Compile');
+    autoCompile = true;
   } else if (m.type === 'result') {
-    busy = false;
+    busy = !m.final;
     logEl.textContent = m.log || m.console || '';
     logEl.scrollTop = logEl.scrollHeight;
-    const modes = m.passes.map(p => p.mode === 'resume' ? `resumed@${p.resumedAtEvent}` : p.mode).join(' + ');
+    const modes = (m.pass ? 'pass ' + (m.pass + 1) + ': ' : '') + m.passes.map(p => p.mode === 'resume' ? `resumed@${p.resumedAtEvent}` : p.mode).join(' + ');
     if (m.pdf) {
       await view.show(m.pdf);
       if (lastUrl) URL.revokeObjectURL(lastUrl);
@@ -128,14 +138,17 @@ worker.onmessage = async ev => {
       $('dl').href = lastUrl; $('dl').hidden = false;
     }
     const warm = m.passes.some(p => p.mode === 'resume' || p.mode === 'cached');
+    const errs = (m.log.match(/^(!|[^\n:]+:\d+:) .*/gm) || []);
     setStatus(`<b>${m.ms.toFixed(0)} ms</b> <span class="pill ${warm ? 'warm' : ''}">${modes}</span> · ${m.stats.snapshotsHeld} snapshots · exit ${m.exit}` +
+              (errs.length ? ` · <span class="err" title="${errs.join('\n').replace(/"/g, '&quot;')}">${errs.length} error${errs.length > 1 ? 's' : ''}: ${errs[0].replace(/</g, '&lt;').slice(0, 70)}</span>` : '') +
+              (m.final ? '' : ' · <i>refining cross-references…</i>') +
               (m.pdf ? '' : ' <span class="err">no PDF — see log</span>'));
     if (!m.pdf) $('logwrap').open = true;
-    if (dirty) { dirty = false; compile(); }
+    if (m.final && dirty) { dirty = false; compile(); }
   } else if (m.type === 'error') {
     busy = false; setStatus(`<span class="err">${m.message.split('\n')[0]}</span>`); logEl.textContent = m.message;
   }
-};
+}
 
 function compile() {
   if (!ready) return;
@@ -143,6 +156,7 @@ function compile() {
   busy = true;
   localStorage.setItem('pdftex-wasm-src', src.value);
   setStatus('compiling…');
+  clearTimeout(watchdog); watchdog = setTimeout(() => { $('stop').hidden = false; }, 8000);   // runaway document?
   worker.postMessage({ type: 'compile', id: nextId++, files: { 'main.tex': src.value }, main: 'main.tex',
                        incremental: $('incr').checked, maxPasses: 3 });
 }
@@ -154,7 +168,8 @@ $('compile').onclick = compile;
 $('long').onclick = () => { src.value = longSample(); compile(); };
 window.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') compile(); });
 
-worker.postMessage({ type: 'init' });
+$('stop').onclick = () => { autoCompile = false; worker.terminate(); $('stop').hidden = true; setStatus('engine stopped — restarting…'); startWorker(); };
+startWorker();
 </script>
 </body>
 </html>

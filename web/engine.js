@@ -82,49 +82,47 @@ export class HostFS {
 // ---------------------------------------------------------------------------------------------
 // Memory snapshots: linear memory [0, heap_top) cut into 4 KiB chunks; a snapshot is a table of
 // (immutable, shared) chunks, so consecutive snapshots only pay for the chunks that changed.
-// Finding the changed chunks is the hot spot, so it is done by diff.wasm (SIMD, multi-memory)
-// against a shadow copy of the previous snapshot; a plain JS scan is the fallback.
+// Finding the changed chunks is the hot spot, so pdftex.wasm does it itself (snap.c: SIMD compare
+// against a shadow image of the previous snapshot, kept in a reserved region of its own memory);
+// a plain JS scan is the fallback when the image does not fit the shadow.
 const CH = 1024;                      // chunk size in 32-bit words (= 4 KiB)
 
 class Snapper {
-  constructor(liveMem, diffModule) {
-    this.live = liveMem;
-    this.diff = null;
-    if (diffModule) {
-      try {
-        this.shadow = new WebAssembly.Memory({ initial: 1 });
-        this.diff = new WebAssembly.Instance(diffModule, { env: { live: liveMem, shadow: this.shadow } }).exports.diff;
-      } catch (e) { this.diff = null; }          // no multi-memory/SIMD: JS fallback
-    }
+  constructor(x, mem) {
+    this.x = x; this.mem = mem;
+    this.shLo = x.snap_shadow_lo() >>> 0; this.shHi = x.snap_shadow_hi() >>> 0;
+    this.capacity = x.snap_capacity() >>> 0;
+    this.cLo = this.shLo / 4096; this.cHi = this.shHi / 4096;     // chunk range occupied by the shadow itself
+    this.useShadow = true;
+    this.inSync = false;                                          // does the shadow mirror _lastTable?
   }
-  _ensureShadow(chunks) {
-    const need = Math.ceil((chunks * 4096 + chunks * 4 + 64) / 65536);
-    const have = this.shadow.buffer.byteLength / 65536;
-    if (need > have) this.shadow.grow(need - have);
-  }
-  /** table of chunk Uint32Arrays describing live memory words [0, words) */
+  _fits(chunks) { const a = chunks * 4096; return a <= this.shLo || (a - (this.shHi - this.shLo)) <= this.capacity; }
+  _skip(c) { return c >= this.cLo && c < this.cHi; }
+  /** table of chunk Uint32Arrays describing live memory words [0, words) (null for the shadow region) */
   capture(words, prev) {
-    const live32 = new Uint32Array(this.live.buffer);
-    const n = Math.ceil(words / CH), table = new Array(n);
+    const live32 = new Uint32Array(this.mem.buffer);
+    const n = Math.ceil(words / CH), table = new Array(n).fill(null);
     let fresh = 0;
-    if (this.diff) {
-      this._ensureShadow(n);
-      const pl = prev ? prev.length : 0;
-      if (!prev) new Uint8Array(this.shadow.buffer).set(new Uint8Array(this.live.buffer, 0, n * 4096));
-      const listOff = n * 4096;
-      const k = prev ? this.diff(0, Math.min(pl, n), listOff) : 0;
-      const changed = new Uint32Array(this.shadow.buffer, listOff, k);
-      for (let c = 0; c < pl && c < n; c++) table[c] = prev[c];
-      for (let i = 0; i < k; i++) { const c = changed[i]; table[c] = live32.slice(c * CH, (c + 1) * CH); fresh++; }
-      for (let c = pl; c < n; c++) {                                    // chunks the previous image did not cover
-        table[c] = live32.slice(c * CH, Math.min((c + 1) * CH, live32.length)); fresh++;
-      }
-      if (n > pl && prev) new Uint8Array(this.shadow.buffer).set(new Uint8Array(this.live.buffer, pl * 4096, (n - pl) * 4096), pl * 4096);
+    const slice = c => live32.slice(c * CH, Math.min((c + 1) * CH, live32.length));
+    if (this.useShadow && !this._fits(n)) this.useShadow = false;           // too big: permanent JS fallback
+    if (this.useShadow && prev && this.inSync) {
+      const pl = Math.min(prev.length, n);
+      for (let c = 0; c < pl; c++) table[c] = prev[c];
+      const k = this.x.snap_diff(pl);
+      const list = new Uint32Array(this.mem.buffer, this.x.snap_list_ptr(), k);
+      for (let i = 0; i < k; i++) { const c = list[i]; table[c] = slice(c); fresh++; }
+      for (let c = pl; c < n; c++) if (!this._skip(c)) { table[c] = slice(c); fresh++; }
+      if (n > pl) this.x.snap_copy(pl, n);
       return { table, fresh };
     }
-    for (let c = 0; c < n; c++) {
-      const lo = c * CH, hi = Math.min(lo + CH, live32.length);
-      const p = prev && c < prev.length ? prev[c] : null;
+    if (this.useShadow) {                                                    // first capture: seed the shadow
+      for (let c = 0; c < n; c++) if (!this._skip(c)) { table[c] = slice(c); fresh++; }
+      this.x.snap_copy(0, n); this.inSync = true;
+      return { table, fresh };
+    }
+    for (let c = 0; c < n; c++) {                                            // pure JS fallback
+      if (this._skip(c)) continue;
+      const lo = c * CH, hi = Math.min(lo + CH, live32.length), p = prev && c < prev.length ? prev[c] : null;
       if (p && p.length === hi - lo) {
         let same = true;
         for (let i = 0, j = lo; i < p.length; i++, j++) if (p[i] !== live32[j]) { same = false; break; }
@@ -136,15 +134,11 @@ class Snapper {
   }
   /** make live memory (and the shadow image) equal to `table`; zero [table end, zeroTo) */
   restore(table, zeroToWords) {
-    const live32 = new Uint32Array(this.live.buffer);
-    for (let c = 0; c < table.length; c++) live32.set(table[c], c * CH);
+    const live32 = new Uint32Array(this.mem.buffer);
+    for (let c = 0; c < table.length; c++) if (table[c]) live32.set(table[c], c * CH);
     const from = table.length * CH;
     if (zeroToWords > from) live32.fill(0, from, Math.min(zeroToWords, live32.length));
-    if (this.diff) {
-      this._ensureShadow(table.length);
-      const sh32 = new Uint32Array(this.shadow.buffer);
-      for (let c = 0; c < table.length; c++) sh32.set(table[c], c * CH);
-    }
+    if (this.useShadow) { this.x.snap_copy(0, table.length); this.inSync = true; }
   }
 }
 
@@ -162,8 +156,8 @@ export class TexEngine {
     return e;
   }
 
-  constructor({ fs, env = {}, diffWasm = null, snapshotIntervalMs = 20, maxSnapshots = 600 }) {
-    this.diffWasm = diffWasm;
+  constructor({ fs, env = {}, snapshotIntervalMs = 40, maxSnapshots = 600, jsDiffOnly = false }) {
+    this.jsDiffOnly = jsDiffOnly;
     this.fs = fs;
     this.env = { ...env };
     this.stdout = [];           // text chunks written to fd 1/2
@@ -234,8 +228,8 @@ export class TexEngine {
     this.x._initialize();
     this.dataPtr = this.x.asyncify_data_ptr();
     this.argsPtr = this.x.tex_args_ptr();
-    this.snapper = new Snapper(this.mem, this.diffWasm instanceof WebAssembly.Module ? this.diffWasm
-                               : this.diffWasm ? await WebAssembly.compile(this.diffWasm) : null);
+    this.snapper = new Snapper(this.x, this.mem);
+    if (this.jsDiffOnly) this.snapper.useShadow = false;
     this.initSnap = this._capture('init');        // pristine process image: a "cold start" is a restore of this
   }
 
@@ -320,8 +314,8 @@ export class TexEngine {
     const s = this._capture('async');
     this.snapshots.push(s);
     this.stats.snapshots++; this.stats.snapshotMs += s.ms;
-    // adaptive spacing: never spend more than ~1/4 of the compile time on snapshots
-    this._lastSnapAt = now(); this._interval = Math.max(this.snapIntervalMs, 3 * s.ms);
+    // adaptive spacing: spend at most ~1/5 of the compile time on snapshots
+    this._lastSnapAt = now(); this._interval = Math.max(this.snapIntervalMs, 4 * s.ms);
     if (this.snapshots.length > this.maxSnapshots) {          // thin out: drop every other snapshot of the older half
       const keep = [], half = this.snapshots.length >> 1;
       this.snapshots.forEach((x, i) => { if (i >= half || i % 2 === 0) keep.push(x); });
@@ -383,7 +377,7 @@ export class TexEngine {
     if (this.lastArgs && this.lastArgs.join('\0') !== argv.join('\0')) { this.lastFiles = null; }   // different command: start over
     this.lastArgs = argv;
 
-    const passes = [];
+    const passes = []; let converged = true;
     for (let pass = 0; pass < maxPasses; pass++) {
       const plan = this._plan();
       const p0 = now();
@@ -395,11 +389,12 @@ export class TexEngine {
       this.result = { exit, pdf: this.getFile(job + '.pdf'), log: this.getFile(job + '.log') };
       passes.push({ mode: plan.mode, firstBad: plan.firstBad, resumedAtEvent: plan.snap ? plan.snap.traceLen : 0,
                     events: this.trace.length, snapshotsHeld: this.snapshots.length, ms: now() - p0 });
-      if (!changed) break;                         // cross-references converged
+      converged = !changed;
+      if (converged) break;                        // cross-references converged
     }
     const r = this.result || { exit: -1, pdf: null, log: null };
     return { exit: r.exit, pdf: r.pdf, log: r.log ? dec.decode(r.log) : '', console: this.consoleOutput,
-             ms: now() - t0, passes, stats: { ...this.stats, snapshotsHeld: this.snapshots.length } };
+             converged, ms: now() - t0, passes, stats: { ...this.stats, snapshotsHeld: this.snapshots.length } };
   }
 
   /** Decide how to produce the output after the user files (possibly) changed. */

@@ -19,7 +19,5 @@ export function loadSystemFS({ withFmt = true } = {}) {
 
 export async function newEngine(hfs, opts = {}) {
   const wasm = fs.readFileSync(path.join(WEB, 'pdftex.wasm'));
-  const diffPath = path.join(WEB, 'diff.wasm');
-  const diffWasm = process.env.NO_SIMD_DIFF || !fs.existsSync(diffPath) ? null : fs.readFileSync(diffPath);
-  return TexEngine.create({ wasm, fs: hfs, diffWasm, ...opts });
+  return TexEngine.create({ wasm, fs: hfs, jsDiffOnly: !!process.env.NO_SIMD_DIFF, ...opts });
 }

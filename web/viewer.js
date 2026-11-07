@@ -11,7 +11,7 @@ export class PdfView {
   }
   async show(bytes, relayout = false) {
     const gen = ++this.gen, top = this.el.scrollTop;
-    if (bytes) { this.doc?.destroy(); this.doc = await pdfjs.getDocument({ data: bytes.slice() }).promise; }
+    if (bytes) { const old = this.doc; this.doc = await pdfjs.getDocument({ data: bytes.slice() }).promise; old?.destroy(); }
     if (gen !== this.gen) return;
     const doc = this.doc, w = this._w = this.el.clientWidth;
     const frag = document.createDocumentFragment(), nodes = [];
@@ -37,7 +37,8 @@ export class PdfView {
     const c = document.createElement('canvas');
     c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
     c.style.width = ph.style.width; c.style.height = ph.style.height;
-    await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    try { await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise; }
+    catch (e) { return; }                       // cancelled because a newer PDF replaced this document
     if (ph.isConnected) ph.replaceWith(c);
   }
 }

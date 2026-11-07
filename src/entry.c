@@ -19,7 +19,7 @@
 
 #define EXPORT __attribute__((used, visibility("default")))
 
-extern int main(int, char **);
+extern int main(int, char **);   /* texmfmp.c (pdftexextra.c): sets argc/argv, calls mainbody() */
 extern int vfs_file_is_user(FILE *);
 
 static char args_buf[16384];

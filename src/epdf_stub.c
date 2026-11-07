@@ -3,9 +3,7 @@
    \includegraphics{x.pdf} fail with a clear pdfTeX error instead. */
 #include <stdio.h>
 #include <stdlib.h>
-float epdf_width, epdf_height, epdf_orig_x, epdf_orig_y, epdf_rotate;
-int epdf_selected_page, epdf_num_pages, epdf_page_box, epdf_has_page_group;
-void *epdf_doc;
+/* (the epdf_* state variables are defined by writeimg.c; only pdftoepdf.cc's functions are stubbed) */
 void epdf_check_mem(void) {}
 void epdf_delete(void) {}
 int read_pdf_info(char *image_name, char *page_name, int page_num, int pagebox, int minor_pdf_version_wanted, int pdf_inclusion_errorlevel, int pdf_suppress_page_group_warning) {

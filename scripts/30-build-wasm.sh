@@ -15,9 +15,9 @@ sed -e 's/^#define SIZEOF_LONG 8/#define SIZEOF_LONG 4/' "$GEN/kpathsea-c-auto.h
 cp "$GEN/kpathsea-paths.h" "$WORK/wasm/inc/kpathsea/paths.h"
 cp "$GEN/kpathsea-kpathsea.h" "$WORK/wasm/inc/kpathsea/kpathsea.h"
 
-CFLAGS="$OPT -w -DHAVE_CONFIG_H -DNO_DEBUG -D__SyncTeX__ -DSYNCTEX_ENGINE_H=\"synctex-pdftex.h\" -DPDF_PARSER_ONLY \
-  -I$ROOT/src -I$ROOT/src/shim -I$GEN -I$WORK/wasm/inc -I$SRC -I$KP \
-  -I$SRC/libmd5 -I$SRC/pdftexdir -I$SRC/synctexdir -I$WORK/src/zlib"
+CF=($OPT -w -DHAVE_CONFIG_H -DNO_DEBUG -D__SyncTeX__ '-DSYNCTEX_ENGINE_H="synctex-pdftex.h"' -DPDF_PARSER_ONLY
+  -I"$ROOT/src" -I"$ROOT/src/shim" -I"$GEN" -I"$WORK/wasm/inc" -I"$SRC" -I"$KP"
+  -I"$SRC/libmd5" -I"$SRC/pdftexdir" -I"$SRC/synctexdir" -I"$WORK/src/zlib")
 
 JOBS="$OBJ/jobs.txt"; : > "$JOBS"
 declare -a objs=()
@@ -25,7 +25,7 @@ add() { # name src [extra cflags...]   (queue a compile job)
   local name="$1" src="$2"; shift 2
   local o="$OBJ/$name.o"; objs+=("$o")
   if [ -n "${FORCE:-}" ] || [ ! -f "$o" ] || [ "$src" -nt "$o" ] || [ -n "$(find "$ROOT/src" -newer "$o" -name '*.h' 2>/dev/null)" ]; then
-    printf '%s\n' "emcc $CFLAGS $* -c $src -o $o" >> "$JOBS"
+    printf '%q ' emcc "${CF[@]}" "$@" -c "$src" -o "$o" >> "$JOBS"; echo >> "$JOBS"
   fi
 }
 
@@ -37,7 +37,7 @@ for f in avl avlstuff epdf mapfile pkin subfont tounicode utils vfpacket writeen
   add pdftexdir_$f "$SRC/pdftexdir/$f.c"
 done
 add synctex "$SRC/synctexdir/synctex.c"
-for f in basechsuffix chartostring coredump eofeoln fprintreal input2int inputint main openclose \
+for f in basechsuffix chartostring coredump eofeoln fprintreal input2int inputint openclose \
          printversion setupvar uexit usage version zround; do
   add lib_$f "$SRC/lib/$f.c"
 done
@@ -48,8 +48,9 @@ for f in adler32 crc32 deflate infback inffast inflate inftrees trees zutil comp
 done
 # our own replacements: kpathsea, vfs, stubs for xpdf/libpng, entry glue
 for f in vfs mini_kpse epdf_stub png_stub entry; do add $f "$ROOT/src/$f.c"; done
+add snap "$ROOT/src/snap.c" -msimd128      # SIMD chunk diff for snapshots
 
-xargs -P "$(nproc)" -I{} sh -c '{}' < "$JOBS"
+xargs -d '\n' -P "$(nproc)" -I{} bash -c '{}' < "$JOBS"
 
 WRAPS=""
 for s in fileno fopen fopen64 stat lstat stat64 lstat64 access remove unlink rename getcwd mkdir popen pclose system input_line; do
@@ -58,9 +59,9 @@ done
 
 emcc $OPT "${objs[@]}" -o "$OUT/pdftex.wasm" $WRAPS \
   --no-entry -sSTANDALONE_WASM=1 -sFILESYSTEM=0 \
-  -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=134217728 -sMAXIMUM_MEMORY=2147483648 -sSTACK_SIZE=4194304 \
-  -sEXPORTED_FUNCTIONS=_tex_run,_tex_args_ptr,_asyncify_data_ptr,_asyncify_data_reset,_sp_get,_sp_set,_heap_top,_vfs_count,_vfs_name,_vfs_data,_vfs_len,_vfs_find_index,_malloc,_free \
+  -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456 -sMAXIMUM_MEMORY=2147483648 -sSTACK_SIZE=4194304 \
+  -sEXPORTED_FUNCTIONS=_tex_run,_tex_args_ptr,_asyncify_data_ptr,_asyncify_data_reset,_sp_get,_sp_set,_heap_top,_snap_shadow_lo,_snap_shadow_hi,_snap_list_ptr,_snap_capacity,_snap_copy,_snap_diff,_vfs_count,_vfs_name,_vfs_data,_vfs_len,_vfs_find_index,_malloc,_free \
   -sASYNCIFY=1 -sASYNCIFY_IMPORTS=host_snapshot -sASYNCIFY_IGNORE_INDIRECT=1 \
-  -sERROR_ON_UNDEFINED_SYMBOLS=1 -Wl,--allow-multiple-definition
+  -sERROR_ON_UNDEFINED_SYMBOLS=1
 mkdir -p "$WORK/web" && cp "$OUT/pdftex.wasm" "$WORK/web/pdftex.wasm"
 ls -la "$WORK/web/pdftex.wasm"
