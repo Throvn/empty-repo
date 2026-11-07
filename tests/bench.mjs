@@ -3,7 +3,8 @@
 //   node tests/bench.mjs [file.tex]
 import fs from 'node:fs';
 import { loadSystemFS, newEngine } from '../scripts/node-common.mjs';
-const file = process.argv[2] || new URL('./long.tex', import.meta.url);
+import { longDoc } from './longdoc.mjs';
+const file = process.argv[2] || longDoc(Number(process.env.SECTIONS || 60));
 const base = fs.readFileSync(file, 'utf8');
 const lines = base.split('\n');
 const eng = await newEngine(loadSystemFS(), { env: { SOURCE_DATE_EPOCH: '1700000000', FORCE_SOURCE_DATE: '1' } });

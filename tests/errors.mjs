@@ -3,8 +3,9 @@
 // including after fatal errors (missing package, runaway argument, no \end{document}).
 import fs from 'node:fs';
 import { loadSystemFS, newEngine } from '../scripts/node-common.mjs';
+import { longDoc } from './longdoc.mjs';
 const ENV = { SOURCE_DATE_EPOCH: '1700000000', FORCE_SOURCE_DATE: '1' };
-const good = fs.readFileSync(new URL('./long.tex', import.meta.url), 'utf8');
+const good = fs.readFileSync(longDoc(60), 'utf8');
 const eq = (a, b) => (!a && !b) || (a && b && Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0);
 const sameLog = (a, b) => a.replace(/\d\d? \w{3} \d{4} \d\d:\d\d/g, '') === b.replace(/\d\d? \w{3} \d{4} \d\d:\d\d/g, '');
 const eng = await newEngine(loadSystemFS(), { env: ENV });

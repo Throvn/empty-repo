@@ -7,10 +7,11 @@
 //  5. every result must be byte-identical to a from-scratch compile of the same sources
 import fs from 'node:fs';
 import { loadSystemFS, newEngine } from '../scripts/node-common.mjs';
+import { longDoc } from './longdoc.mjs';
 
 const ENV = { SOURCE_DATE_EPOCH: '1700000000', FORCE_SOURCE_DATE: '1' };
 const hfsShared = loadSystemFS();               // read-only pack, shared by all engines
-const base = fs.readFileSync(new URL('./long.tex', import.meta.url), 'utf8');
+const base = fs.readFileSync(longDoc(60), 'utf8');
 
 async function fresh() { return newEngine(hfsShared.clone ? hfsShared.clone() : loadSystemFS(), { env: ENV }); }
 const eq = (a, b) => a && b && a.length === b.length && Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0;
