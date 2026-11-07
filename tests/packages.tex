@@ -1,0 +1,26 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{fancyhdr}
+\usepackage{mathptmx}
+\usepackage[colorlinks=true,linkcolor=blue]{hyperref}
+\newtheorem{thm}{Theorem}
+\pagestyle{fancy}
+\begin{document}
+\section{Intro}\label{s:intro}
+Some \textcolor{red}{red} text and a \textbf{bold} one, see Section~\ref{s:intro} and \url{https://example.org}.
+\begin{thm}[Euler]
+  $e^{i\pi}+1=0$.
+\end{thm}
+\begin{tabular}{lr}\toprule A & B\\\midrule 1 & 2\\\bottomrule\end{tabular}
+\begin{lstlisting}[language=C]
+int main(void) { return 0; }
+\end{lstlisting}
+$$\sum_{i=1}^n i^2 = \frac{n(n+1)(2n+1)}{6}\qquad \mathbb{R}\ \mathcal{L}$$
+\end{document}

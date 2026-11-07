@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "wasm_host.h"
 
 #define EXPORT __attribute__((used, visibility("default")))
@@ -44,6 +45,9 @@ extern void *emscripten_stack_get_current(void);
 extern void _emscripten_stack_restore(void *);
 EXPORT void *sp_get(void) { return emscripten_stack_get_current(); }
 EXPORT void sp_set(void *p) { _emscripten_stack_restore(p); }
+
+/* Top of the heap: everything the process can have touched lives in [0, heap_top()). */
+EXPORT unsigned heap_top(void) { return (unsigned)(size_t)sbrk(0); }
 
 /* ---- snapshot hook: wraps texmfmp.c:input_line (linker --wrap=input_line) ---- */
 extern int __real_input_line(FILE *f);

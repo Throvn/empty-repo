@@ -59,7 +59,7 @@ done
 emcc $OPT "${objs[@]}" -o "$OUT/pdftex.wasm" $WRAPS \
   --no-entry -sSTANDALONE_WASM=1 -sFILESYSTEM=0 \
   -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=134217728 -sMAXIMUM_MEMORY=2147483648 -sSTACK_SIZE=4194304 \
-  -sEXPORTED_FUNCTIONS=_tex_run,_tex_args_ptr,_asyncify_data_ptr,_asyncify_data_reset,_sp_get,_sp_set,_vfs_count,_vfs_name,_vfs_data,_vfs_len,_vfs_find_index,_malloc,_free \
+  -sEXPORTED_FUNCTIONS=_tex_run,_tex_args_ptr,_asyncify_data_ptr,_asyncify_data_reset,_sp_get,_sp_set,_heap_top,_vfs_count,_vfs_name,_vfs_data,_vfs_len,_vfs_find_index,_malloc,_free \
   -sASYNCIFY=1 -sASYNCIFY_IMPORTS=host_snapshot -sASYNCIFY_IGNORE_INDIRECT=1 \
   -sERROR_ON_UNDEFINED_SYMBOLS=1 -Wl,--allow-multiple-definition
 mkdir -p "$WORK/web" && cp "$OUT/pdftex.wasm" "$WORK/web/pdftex.wasm"

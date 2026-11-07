@@ -6,13 +6,16 @@ set -euo pipefail
 . "$(dirname "$0")/env.sh"
 DEBVER=2023.20240207-1
 PKGS="texlive-base texlive-latex-base texlive-latex-recommended texlive-fonts-recommended"
+LMVER=2.005-1     # Latin Modern (T1/EC-encoded Type1 fonts: needed by \usepackage[T1]{fontenc}+lmodern)
 DL="$WORK/dl/debs"; XD="$WORK/debs-x"; TREE="$WORK/texmf"; OUT="$WORK/web"
 mkdir -p "$DL" "$XD" "$OUT"
 cd "$DL"
 for p in $PKGS; do
   [ -f "${p}_${DEBVER}_all.deb" ] || apt-get download "$p=$DEBVER" >/dev/null
 done
+[ -f "lmodern_${LMVER}_all.deb" ] || apt-get download "lmodern=$LMVER" >/dev/null
 sha256sum -c "$ROOT/scripts/checksums/debs.sha256" >/dev/null || { echo "deb checksum mismatch" >&2; exit 1; }
+[ -d "$XD/lmodern" ] || dpkg-deb -x "lmodern_${LMVER}_all.deb" "$XD/lmodern"
 for p in $PKGS; do [ -d "$XD/$p" ] || dpkg-deb -x "${p}_${DEBVER}_all.deb" "$XD/$p"; done
 
 rm -rf "$TREE"; mkdir -p "$TREE"
@@ -21,6 +24,10 @@ merge() { # pkg subdir
   [ -d "$s" ] && { mkdir -p "$TREE/$2"; cp -a "$s/." "$TREE/$2/"; } || true
 }
 for p in $PKGS; do for d in tex fonts/tfm fonts/vf fonts/type1 fonts/enc fonts/map; do merge $p $d; done; done
+# lmodern lives under usr/share/texmf (not texmf-dist)
+for d in tex fonts/tfm fonts/type1 fonts/enc fonts/map; do
+  [ -d "$XD/lmodern/usr/share/texmf/$d" ] && { mkdir -p "$TREE/$d"; cp -a "$XD/lmodern/usr/share/texmf/$d/." "$TREE/$d/"; }
+done
 mkdir -p "$TREE/web2c"; cp "$XD/texlive-base/usr/share/texlive/texmf-dist/web2c/cp227.tcx" "$TREE/web2c/"
 
 # ---- prune what a browser demo does not need (engines other than pdfTeX, big unused packages) ----
@@ -57,4 +64,5 @@ du -sh "$TREE"; find "$TREE" -type f | wc -l
 # ---- pack with emscripten's file_packager (data blob + json index; no JS loader needed) ----
 python3 "$EMENV/lib/emscripten-4.0.9/tools/file_packager.py" "$OUT/texlive.data" \
   --preload "$TREE@/texmf" --separate-metadata --js-output="$OUT/texlive.pack.js" --no-node >/dev/null
+mv -f "$OUT/texlive.pack.js.metadata" "$OUT/texlive.json"; rm -f "$OUT/texlive.pack.js"   # only the data blob + json index are used
 ls -la "$OUT"

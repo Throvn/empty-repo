@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pdfTeX in WebAssembly</title>
+<style>
+  :root { --bg:#f6f5f2; --panel:#fff; --ink:#1d1d1f; --muted:#6b6b70; --line:#dcdad4; --accent:#b3261e; --ok:#1b7f3b; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1b1b1d; --panel:#242427; --ink:#ececee; --muted:#9a9aa2; --line:#38383d; --accent:#ff8a80; --ok:#6fd58a; } }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; padding: .6rem 1rem; border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { font-size: 1rem; margin: 0 1rem 0 0; font-weight: 650; }
+  button { font: inherit; padding: .4rem .9rem; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  label { color: var(--muted); display: inline-flex; gap: .35rem; align-items: center; cursor: pointer; }
+  #status { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #status b { color: var(--ink); }
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr auto; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr auto; } }
+  #src { width: 100%; height: 100%; resize: none; border: 0; border-right: 1px solid var(--line); padding: 1rem; outline: none;
+    background: var(--panel); color: var(--ink); font: 13px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; tab-size: 2; }
+  #view { overflow: auto; background: #8a8a90; padding: 12px 0; }
+  #view canvas { display: block; margin: 0 auto 12px; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.4); }
+  #view .ph { margin: 0 auto 12px; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.4); }
+  #logwrap { grid-column: 1 / -1; border-top: 1px solid var(--line); background: var(--panel); }
+  #logwrap summary { padding: .35rem 1rem; color: var(--muted); cursor: pointer; }
+  #log { margin: 0; padding: .5rem 1rem 1rem; height: 200px; overflow: auto; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  .err { color: var(--accent); }
+  .pill { display: inline-block; padding: 0 .5rem; border-radius: 99px; background: var(--line); font-size: 12px; margin-left: .25rem; }
+  .pill.warm { background: var(--ok); color: #fff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>pdfTeX → WebAssembly</h1>
+  <button id="compile" class="primary" disabled>Compile</button>
+  <label><input type="checkbox" id="live" checked> live</label>
+  <label><input type="checkbox" id="incr" checked> incremental (TeXpresso-style snapshots)</label>
+  <button id="long" title="a 60-section document: watch incremental compilation skip the unchanged prefix">Load long sample</button>
+  <a id="dl" download="main.pdf" hidden><button>Download PDF</button></a>
+  <span id="status">loading…</span>
+</header>
+<main>
+  <textarea id="src" spellcheck="false" autofocus></textarea>
+  <div id="view"></div>
+  <details id="logwrap"><summary>TeX log</summary><pre id="log"></pre></details>
+</main>
+<script type="module">
+import { PdfView } from './viewer.js';
+
+const SAMPLE = String.raw`\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{hyperref}
+
+\title{Hello from WebAssembly}
+\author{pdfTeX running in your browser}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Typesetting}
+This page was typeset by \emph{pdfTeX} compiled to a single \texttt{wasm} binary.
+Edit the text on the left and the PDF on the right updates immediately.
+
+\begin{align}
+  \int_{-\infty}^{\infty} e^{-x^2}\,dx &= \sqrt{\pi}, &
+  \zeta(s) &= \sum_{n=1}^{\infty} \frac{1}{n^s} = \prod_{p}\frac{1}{1-p^{-s}}.
+\end{align}
+
+\section{Cross references}
+See Section~\ref{sec:more} on page~\pageref{sec:more}.
+
+\section{More}\label{sec:more}
+Ligatures: fi fl ffi. Quotes: \textquotedblleft double\textquotedblright. Dashes: 1--2, em---dash.
+
+\end{document}
+`;
+
+function longSample() {
+  const words = 'lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua'.split(' ');
+  let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const para = n => Array.from({ length: n }, () => words[Math.floor(rnd() * words.length)]).join(' ') + '.';
+  const out = ['\\documentclass{article}', '\\usepackage{amsmath}', '\\usepackage[margin=2.5cm]{geometry}',
+    '\\title{A long document}', '\\author{wasm}', '\\begin{document}', '\\maketitle', '\\tableofcontents', '\\newpage'];
+  for (let i = 1; i <= 60; i++) {
+    out.push(`\\section{Section number ${i}}\\label{sec:${i}}`);
+    for (let j = 0; j < 6; j++) out.push(para(70), '');
+    out.push(`\\begin{equation} \\sum_{k=1}^{${i}} k = \\frac{${i}(${i}+1)}{2} \\end{equation}`, `See Section~\\ref{sec:${Math.max(1, i - 1)}}.`, '');
+  }
+  out.push('\\end{document}');
+  return out.join('\n') + '\n';
+}
+
+const $ = id => document.getElementById(id);
+const src = $('src'), statusEl = $('status'), logEl = $('log');
+const view = new PdfView($('view'));
+src.value = localStorage.getItem('pdftex-wasm-src') || SAMPLE;
+
+const worker = new Worker('worker.js', { type: 'module' });
+let ready = false, busy = false, dirty = false, nextId = 1, lastUrl = null;
+
+const setStatus = html => { statusEl.innerHTML = html; };
+worker.onerror = e => setStatus(`<span class="err">worker error: ${e.message}</span>`);
+worker.onmessage = async ev => {
+  const m = ev.data;
+  if (m.type === 'progress') setStatus(m.text);
+  else if (m.type === 'ready') {
+    ready = true; $('compile').disabled = false;
+    setStatus(`engine ready (${(m.ms / 1000).toFixed(1)} s load, ${m.wasmKB} KB wasm + ${m.packMB} MB TeX files${m.simd ? ', SIMD snapshots' : ''})`);
+    compile();
+  } else if (m.type === 'result') {
+    busy = false;
+    logEl.textContent = m.log || m.console || '';
+    logEl.scrollTop = logEl.scrollHeight;
+    const modes = m.passes.map(p => p.mode === 'resume' ? `resumed@${p.resumedAtEvent}` : p.mode).join(' + ');
+    if (m.pdf) {
+      await view.show(m.pdf);
+      if (lastUrl) URL.revokeObjectURL(lastUrl);
+      lastUrl = URL.createObjectURL(new Blob([m.pdf], { type: 'application/pdf' }));
+      $('dl').href = lastUrl; $('dl').hidden = false;
+    }
+    const warm = m.passes.some(p => p.mode === 'resume' || p.mode === 'cached');
+    setStatus(`<b>${m.ms.toFixed(0)} ms</b> <span class="pill ${warm ? 'warm' : ''}">${modes}</span> · ${m.stats.snapshotsHeld} snapshots · exit ${m.exit}` +
+              (m.pdf ? '' : ' <span class="err">no PDF — see log</span>'));
+    if (!m.pdf) $('logwrap').open = true;
+    if (dirty) { dirty = false; compile(); }
+  } else if (m.type === 'error') {
+    busy = false; setStatus(`<span class="err">${m.message.split('\n')[0]}</span>`); logEl.textContent = m.message;
+  }
+};
+
+function compile() {
+  if (!ready) return;
+  if (busy) { dirty = true; return; }
+  busy = true;
+  localStorage.setItem('pdftex-wasm-src', src.value);
+  setStatus('compiling…');
+  worker.postMessage({ type: 'compile', id: nextId++, files: { 'main.tex': src.value }, main: 'main.tex',
+                       incremental: $('incr').checked, maxPasses: 3 });
+}
+
+let timer = null;
+src.addEventListener('input', () => { if ($('live').checked) { clearTimeout(timer); timer = setTimeout(compile, 120); } });
+src.addEventListener('keydown', e => { if (e.key === 'Tab') { e.preventDefault(); document.execCommand('insertText', false, '  '); } });
+$('compile').onclick = compile;
+$('long').onclick = () => { src.value = longSample(); compile(); };
+window.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') compile(); });
+
+worker.postMessage({ type: 'init' });
+</script>
+</body>
+</html>
