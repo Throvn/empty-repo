@@ -25,6 +25,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <stdint.h>
+#include <time.h>
 
 #include <zlib.h>
 #include <stdarg.h>
@@ -35,6 +36,7 @@ typedef struct memfile {
   char *name;
   unsigned char *data;
   size_t len, cap;
+  time_t mtime;
   struct memfile *next;
 } memfile;
 
@@ -57,6 +59,7 @@ static memfile *mf_create(const char *name, int truncate) {
   if (m) { if (truncate) m->len = 0; return m; }
   m = calloc(1, sizeof *m);
   m->name = strdup(norm(name));
+  m->mtime = time(NULL);
   m->next = memfiles;
   memfiles = m;
   return m;
@@ -109,6 +112,7 @@ static ssize_t c_write(void *ck, const char *buf, size_t n) {
   memcpy(h->mf->data + h->pos, buf, n);
   h->pos += n;
   if (h->pos > h->mf->len) h->mf->len = h->pos;
+  h->mf->mtime = time(NULL);
   return n;
 }
 
@@ -138,6 +142,16 @@ FILE *__wrap_fopen(const char *path, const char *mode) {
   int wr = (mode[0] == 'w' || mode[0] == 'a' || strchr(mode, '+'));
   vh *h = calloc(1, sizeof *h);
   if (!h) return NULL;
+  if (mode[0] == 'w' || mode[0] == 'a') {      /* like a real FS: the directory must already exist */
+    const char *slash = strrchr(norm(path), '/');
+    if (slash) {
+      char dir[1024]; size_t dl = slash - norm(path);
+      if (dl >= sizeof dir) { free(h); errno = ENAMETOOLONG; return NULL; }
+      memcpy(dir, norm(path), dl); dir[dl] = 0;
+      if (!dl) dir[0] = '/', dir[1] = 0;
+      if (!host_isdir(dir)) { free(h); errno = ENOENT; return NULL; }
+    }
+  }
   if (mode[0] == 'w') {
     h->mf = mf_create(path, 1);
     h->canwrite = 1;
@@ -177,10 +191,11 @@ FILE *__wrap_fopen(const char *path, const char *mode) {
 FILE *__wrap_fopen64(const char *p, const char *m) { return __wrap_fopen(p, m); }
 
 /* ------------------------------------------------------------ stat & friends */
-static int fill_stat(struct stat *st, int isdir, size_t size) {
+static int fill_stat(struct stat *st, int isdir, size_t size, time_t mtime) {
   memset(st, 0, sizeof *st);
   st->st_mode = isdir ? (S_IFDIR | 0755) : (S_IFREG | 0644);
   st->st_size = size;
+  st->st_mtim.tv_sec = st->st_atim.tv_sec = st->st_ctim.tv_sec = mtime;
   st->st_nlink = 1;
   st->st_blksize = 4096;
   return 0;
@@ -200,10 +215,10 @@ int vfs_exists(const char *path) {
 
 int __wrap_stat(const char *path, struct stat *st) {
   memfile *m = mf_find(path);
-  if (m) return fill_stat(st, 0, m->len);
+  if (m) return fill_stat(st, 0, m->len, m->mtime);
   int id = host_lookup(norm(path));
-  if (id >= 0) return fill_stat(st, 0, host_size(id));
-  if (vfs_is_dir(path)) return fill_stat(st, 1, 0);
+  if (id >= 0) return fill_stat(st, 0, host_size(id), host_mtime(id));
+  if (vfs_is_dir(path)) return fill_stat(st, 1, 0, 0);
   errno = ENOENT; return -1;
 }
 int __wrap_lstat(const char *p, struct stat *st) { return __wrap_stat(p, st); }

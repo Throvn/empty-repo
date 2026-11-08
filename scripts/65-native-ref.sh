@@ -6,13 +6,16 @@ set -euo pipefail
 R="$WORK/native-ref"; T="$WORK/texmf"; mkdir -p "$R" /work
 {
   echo "TEXMFROOT = $T"
-  echo "TEXINPUTS = .:$T/tex//"
+  echo "TEXINPUTS = .:$T/tex/{plain,generic,}//"
+  echo "TEXINPUTS.pdflatex = .:$T/tex/{latex,pdftex,generic,}//"
+  echo "TEXINPUTS.pdftex = .:$T/tex/{plain,generic,}//"
   echo "TFMFONTS = $T/fonts/tfm//"
   echo "VFFONTS = $T/fonts/vf//"
   echo "T1FONTS = $T/fonts/type1//"
   echo "ENCFONTS = $T/fonts/enc//"
   echo "TEXFONTMAPS = $T/fonts/map//"
   echo "TCXPATH = $T/web2c"
+  echo "WEB2C = $T/web2c"          # kpse_web2c_format: where cp227.tcx lives
   echo "TEXFORMATS = $R"
   echo "TEXMFCNF = $R"
   echo "shell_escape = f"
@@ -27,6 +30,7 @@ for k, v in re.findall(r'\{"(\w+)",\s*"(\w+)"\}', tab):
 PY
 } > "$R/texmf.cnf"
 ln -sf "$WORK/gen/pdftex.native" "$R/pdflatex"   # invoked as `pdflatex`, like the real thing
+ln -sf "$WORK/gen/pdftex.native" "$R/pdftex"
 cd "$R"
 export TEXMFCNF="$R" SOURCE_DATE_EPOCH=1700000000 FORCE_SOURCE_DATE=1
 "$WORK/gen/pdftex.native" -ini -interaction=nonstopmode -jobname=pdflatex -translate-file=cp227.tcx '*pdflatex.ini' > fmt.log 2>&1 || true

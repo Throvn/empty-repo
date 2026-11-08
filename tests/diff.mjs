@@ -1,45 +1,44 @@
 #!/usr/bin/env node
-// Differential corpus test: every tests/corpus/*.tex is compiled by native pdftex and by pdftex.wasm and the
-// PDFs must be byte-identical (dates pinned).  usage: node tests/diff.mjs [substring-filter] [-v]
+// Differential corpus test.  Every case in tests/corpus (hand-written) and build/corpus (tests/gen-corpus.py) is
+// compiled by native pdftex (the oracle) and by pdftex.wasm in its own process; the PDF and every other output
+// file must be byte-identical, exit codes equal and logs equal modulo line wrapping and paths.
+//   node tests/diff.mjs [substring] [-v] [-j N]
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { nativeCompile, wasmEngine, wasmCompile, loadAssets, IMAGES, firstDiff, ctx, norm } from './lib/harness.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const filt = process.argv[2] && !process.argv[2].startsWith('-') ? process.argv[2] : '';
-const verbose = process.argv.includes('-v');
-const assets = { ...loadAssets(IMAGES), ...loadAssets(path.join(here, 'corpus/assets')) };
-const docs = fs.readdirSync(path.join(here, 'corpus')).filter(f => f.endsWith('.tex') && f.includes(filt)).sort();
-let fail = 0;
-for (const f of docs) {
-  const src = fs.readFileSync(path.join(here, 'corpus', f), 'utf8');
-  const opts = /^%!opts:(.*)$/m.exec(src);              // e.g. %!opts: passes=1
-  const o = Object.fromEntries((opts ? opts[1].trim().split(/\s+/) : []).map(kv => kv.split('=')));
-  const files = { ...assets, 'main.tex': src };
-  let nat, was;
-  try {
-    nat = nativeCompile(files, { passes: +(o.passes ?? 3) });
-    const eng = await wasmEngine();
-    was = wasmCompile(eng, files, { passes: +(o.passes ?? 3) });
-  } catch (e) { console.log(`ERR  ${f}: ${e.stack || e}`); fail++; continue; }
-  let status = 'ok', detail = '';
-  if (!nat.pdf !== !was.pdf) { status = 'FAIL'; detail = `pdf native=${!!nat.pdf} wasm=${!!was.pdf}`; }
-  else if (nat.pdf) {
-    const d = firstDiff(nat.pdf, was.pdf);
-    if (d >= 0) { status = 'FAIL'; detail = `pdf differs at byte ${d} (native ${nat.pdf.length}, wasm ${was.pdf.length})\n   native ${ctx(nat.pdf, d)}\n   wasm   ${ctx(was.pdf, d)}`; }
-  }
-  // every other output file (dvi, aux, toc, \openout files ...) must match too; the .log is compared separately
-  for (const k of new Set([...Object.keys(nat.outputs), ...Object.keys(was.outputs)])) {
-    if (k.endsWith('.log') || k.endsWith('.pdf')) continue;
-    const a = nat.outputs[k], b = was.outputs[k];
-    if (!a || !b) { status = 'FAIL'; detail += `\n   file ${k}: native=${!!a} wasm=${!!b}`; }
-    else if (firstDiff(a, b) >= 0) { status = 'FAIL'; detail += `\n   file ${k} differs at ${firstDiff(a, b)}: native ${ctx(a, firstDiff(a, b))} wasm ${ctx(b, firstDiff(a, b))}`; }
-  }
-  if (nat.exit !== was.exit) { status = 'FAIL'; detail += ` exit native=${nat.exit} wasm=${was.exit}`; }
-  if (norm(nat.log) !== norm(was.log)) { if (status === 'ok') status = 'FAIL'; detail += ' log differs'; if (verbose) { const a = norm(nat.log), b = norm(was.log); let i = 0; while (a[i] === b[i]) i++; detail += `\n   native: ${JSON.stringify(a.slice(Math.max(0,i-50), i+60))}\n   wasm:   ${JSON.stringify(b.slice(Math.max(0,i-50), i+60))}`; } }
-  if (status !== 'ok') fail++;
-  console.log(`${status.padEnd(4)} ${f.padEnd(34)} exit ${was.exit} ${was.pdf ? 'pdf ' + was.pdf.length : 'no pdf'} ${was.ms.toFixed(0)}ms (native ${nat.ms.toFixed(0)}ms) ${detail}`);
+const args = process.argv.slice(2);
+const filt = args.find(a => !a.startsWith('-') && !/^\d+$/.test(a)) || '';
+const jobs = +(args[args.indexOf('-j') + 1] || 4) || 4;
+const gen = path.join(here, '..', 'build', 'corpus');
+if (!fs.existsSync(gen)) execFileSync('python3', [path.join(here, 'gen-corpus.py'), gen], { stdio: 'inherit' });
+const cases = [];
+for (const dir of [path.join(here, 'corpus'), gen]) for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+  if (e.name === 'assets') continue;
+  if ((e.isDirectory() || e.name.endsWith('.tex')) && e.name.includes(filt)) cases.push(path.join(dir, e.name));
 }
-console.log(fail ? `${fail} FAILED of ${docs.length}` : `all ${docs.length} identical to native pdftex`);
+cases.sort();
+let next = 0, fail = 0, done = 0; const results = [];
+const TIMEOUT = 180000;
+async function worker() {
+  while (next < cases.length) {
+    const c = cases[next++];
+    const r = await new Promise(res => {
+      const p = spawn('node', [path.join(here, 'diff-one.mjs'), c], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '', err = '';
+      const t = setTimeout(() => { p.kill('SIGKILL'); res({ name: path.basename(c), status: 'ERR', detail: 'timeout' }); }, TIMEOUT);
+      p.stdout.on('data', d => (out += d)); p.stderr.on('data', d => (err += d));
+      p.on('close', () => { clearTimeout(t); try { res(JSON.parse(out.trim().split('\n').pop())); } catch { res({ name: path.basename(c), status: 'ERR', detail: (err || out).slice(0, 600) }); } });
+    });
+    results.push(r); done++;
+    if (r.status !== 'ok') fail++;
+    if (r.status !== 'ok' || args.includes('-v')) console.log(`${r.status.padEnd(4)} ${r.name.padEnd(36)} exit ${r.exit} pdf ${r.pdf} ${r.ms}ms (native ${r.nms}ms)\n${(r.detail || '').split('\n').filter(Boolean).map(l => '   ' + l).join('\n')}`);
+    else process.stdout.write(`\r${done}/${cases.length} ok   `);
+  }
+}
+await Promise.all(Array.from({ length: jobs }, worker));
+console.log(`\n${fail ? fail + ' FAILED of ' : 'all '}${cases.length} cases${fail ? '' : ' identical to native pdftex'}`);
+fs.writeFileSync(path.join(here, '..', 'build', 'diff-results.json'), JSON.stringify(results, null, 1));
 process.exit(fail ? 1 : 0);

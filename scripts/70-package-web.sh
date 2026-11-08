@@ -4,7 +4,7 @@ set -euo pipefail
 . "$(dirname "$0")/env.sh"
 W="$WORK/web"; mkdir -p "$W"
 PDFJS_VERSION=4.10.38
-cp "$ROOT"/web/{index.html,engine.js,worker.js,viewer.js} "$W/"
+cp "$ROOT"/web/{index.html,engine.js,worker.js,viewer.js,project.js,problems.js} "$W/"
 if [ ! -f "$W/pdf.min.mjs" ]; then      # pdf.js for the preview pane
   mkdir -p "$WORK/pdfjs" && (cd "$WORK/pdfjs" && npm init -y >/dev/null && npm install --silent "pdfjs-dist@$PDFJS_VERSION")
   cp "$WORK/pdfjs/node_modules/pdfjs-dist/build/pdf.min.mjs" "$WORK/pdfjs/node_modules/pdfjs-dist/build/pdf.worker.min.mjs" "$W/"

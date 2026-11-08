@@ -85,8 +85,31 @@ void kpathsea_cnf_line_env_progname(kpathsea k, string l) { (void)k; (void)l; }
 unsigned kpse_magstep_fix(unsigned dpi, unsigned bdpi, int *m) { (void)bdpi; if (m) *m = 0; return dpi; }
 boolean kpse_bitmap_tolerance(double a, double b) { return a == b; }
 string kpse_find_glyph(const_string n, unsigned d, kpse_file_format_type f, kpse_glyph_file_type *g) { (void)n; (void)d; (void)f; (void)g; return NULL; }
-boolean kpse_in_name_ok(const_string f) { (void)f; return true; }
-boolean kpse_out_name_ok(const_string f) { (void)f; return true; }
+/* Port of kpathsea_name_ok(): openin_any / openout_any policy ('a'ny, 'r'estricted, 'p'aranoid). */
+static boolean name_ok(const_string fname, const_string var, const_string dflt, const_string verb) {
+  string v = kpse_var_value(var);
+  const_string choice = v ? v : dflt;
+  if (*choice == 'a' || *choice == 'y' || *choice == '1') return true;
+  const_string q, qq = fname;
+  while ((q = strchr(qq, '.'))) {                 /* .rhosts, .ssh/, ..x : dot files, but allow /./, /../ and .tex */
+    if ((q == fname || q[-1] == '/') && q[1] != '/' && !(q[1] == '.' && q[2] == '/') && strcmp(q, ".tex")) goto not_ok;
+    qq = q + 1;
+  }
+  if (*choice == 'r' || *choice == 'n' || *choice == '0') return true;
+  if (kpse_absolute_p(fname, false)) {            /* absolute: only below $TEXMFOUTPUT */
+    string t = kpse_var_value("TEXMFOUTPUT");
+    if (!t || !*t || fname != strstr(fname, t) || fname[strlen(t)] != '/') goto not_ok;
+  }
+  if (fname[0] == '.' && fname[1] == '.' && fname[2] == '/') goto not_ok;
+  for (const_string dp = strstr(fname, ".."); dp; dp = strstr(dp + 2, ".."))
+    if (dp[2] == '/' && dp[-1] == '/') goto not_ok;
+  return true;
+not_ok:
+  fprintf(stderr, "\n%s: Not %s %s (%s = %s).\n", kpse_def_inst.invocation_name, verb, fname, var, choice);
+  return false;
+}
+boolean kpse_in_name_ok(const_string f) { return name_ok(f, "openin_any", "a", "reading from"); }
+boolean kpse_out_name_ok(const_string f) { return name_ok(f, "openout_any", "p", "writing to"); }
 string kpse_readable_file(string f) { return (vfs_exists(f) && !vfs_is_dir(f)) ? f : NULL; }
 
 /* --------------------------------------------------------------- variables */
@@ -96,7 +119,7 @@ static const struct { const char *name, *value; } params[] = {
   {"font_mem_size", "800000"}, {"font_max", "2000"}, {"hash_extra", "100000"},
   {"pool_size", "3200000"}, {"string_vacancies", "90000"}, {"max_strings", "200000"},
   {"pool_free", "47500"}, {"strings_free", "100"}, {"buf_size", "200000"},
-  {"trie_size", "400000"}, {"hyph_size", "8191"}, {"nest_size", "500"},
+  {"trie_size", "1000000"}, {"hyph_size", "8191"}, {"nest_size", "500"},
   {"max_in_open", "15"}, {"param_size", "10000"}, {"save_size", "100000"},
   {"stack_size", "10000"}, {"dvi_buf_size", "16384"}, {"error_line", "79"},
   {"half_error_line", "50"}, {"max_print_line", "79"}, {"expand_depth", "10000"},
@@ -145,9 +168,12 @@ static int has_suffix(const char *name, const char *sufs) {
 
 static string try_one(const char *name, const char *tag) {
   char out[1024];
-  if (vfs_exists(name) && !vfs_is_dir(name))                           /* cwd (kpathsea says ./name) or exact path */
-    return name[0] == '/' || strchr(name, '/') ? xstrdup(name) : concat("./", name);
-  if (strchr(name, '/')) return NULL;                                  /* paths are never searched */
+  /* absolute or explicitly relative (./x, ../x): kpathsea never searches, it only checks */
+  if (name[0] == '/' || (name[0] == '.' && (name[1] == '/' || (name[1] == '.' && name[2] == '/'))))
+    return vfs_exists(name) && !vfs_is_dir(name) ? xstrdup(name) : NULL;
+  /* the current directory comes first in TEXINPUTS and kpathsea reports such hits as ./name */
+  if (vfs_exists(name) && !vfs_is_dir(name)) return concat("./", name);
+  /* then the TeX tree; names with directory parts (latex/base/article.cls) match by path suffix, like // paths */
   int id = host_search(name, tag, out, sizeof out);
   return id >= 0 ? xstrdup(out) : NULL;
 }
@@ -156,6 +182,11 @@ string kpse_find_file(const_string name, kpse_file_format_type format, boolean m
   (void)must_exist;
   const struct fmt *fm = fmt_of(format);
   const char *tag = fm ? fm->tag : "misc";
+  char tagbuf[96];
+  if (format == kpse_tex_format) {            /* TEXINPUTS.<program> differs per program: tex@pdflatex, tex@pdftex ... */
+    snprintf(tagbuf, sizeof tagbuf, "tex@%s", kpse_def_inst.program_name ? kpse_def_inst.program_name : "");
+    tag = tagbuf;
+  }
   const char *suf = fm ? fm->suf : "";
   string r = NULL;
   while (name[0] == '.' && name[1] == '/') name += 2;

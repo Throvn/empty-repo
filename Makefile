@@ -52,7 +52,7 @@ bench: web
 	node tests/bench.mjs
 
 serve: web
-	cd build/web && python3 -m http.server 8000
+	python3 scripts/serve.py 8000 build/web
 
 clean:
 	rm -rf build/wasm build/web build/.stamps

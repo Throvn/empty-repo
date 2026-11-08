@@ -7,6 +7,8 @@
 HOST_IMPORT(host_lookup)  int host_lookup(const char *path);
 HOST_IMPORT(host_isdir)   int host_isdir(const char *path);
 HOST_IMPORT(host_size)    int host_size(int id);
+/* modification time (seconds since the epoch) of a host file */
+HOST_IMPORT(host_mtime)   unsigned host_mtime(int id);
 /* 1 if the file belongs to the user project (inputs that may change between runs) */
 HOST_IMPORT(host_is_user) int host_is_user(int id);
 /* pread(): returns number of bytes copied into dst (0 at EOF).  For user files the

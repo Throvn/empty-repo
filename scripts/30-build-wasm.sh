@@ -15,6 +15,8 @@ sed -e 's/^#define SIZEOF_LONG 8/#define SIZEOF_LONG 4/' \
 sed -e 's/^#define SIZEOF_LONG 8/#define SIZEOF_LONG 4/' "$GEN/kpathsea-c-auto.h" > "$WORK/wasm/inc/kpathsea/c-auto.h"
 cp "$GEN/kpathsea-paths.h" "$WORK/wasm/inc/kpathsea/paths.h"
 cp "$GEN/kpathsea-kpathsea.h" "$WORK/wasm/inc/kpathsea/kpathsea.h"
+# xpdf's configuration (generated natively by TeX Live's configure for libs/xpdf)
+cp "$WORK/native/libs/xpdf/aconf.h" "$WORK/native/libs/xpdf/aconf2.h" "$WORK/wasm/inc/"
 # libpng config: the stock prebuilt config minus setjmp support (see src/shim/nosjlj.h, src/png_glue.c)
 grep -v -e 'PNG_SETJMP_SUPPORTED' -e 'PNG_SIMPLIFIED_' "$WORK/src/libpng/scripts/pnglibconf.h.prebuilt" > "$WORK/wasm/inc/pnglibconf.h"
 
@@ -63,7 +65,21 @@ else
   for f in adler32 crc32 deflate infback inffast inflate inftrees trees zutil compress uncompr; do
     add zlib_$f "$WORK/src/zlib/$f.c" -DHAVE_UNISTD_H -DZ_HAVE_STDARG_H=1
   done
-  for f in epdf_stub png_glue; do add $f "$ROOT/src/$f.c"; done
+  # xpdf (parser-only subset, as TeX Live builds it): PDF inclusion, needed e.g. by beamer's icons and \includegraphics{x.pdf}
+  XP="$WORK/src/texlive/libs/xpdf/xpdf-src"
+  XPF=(-fno-exceptions -fno-rtti -std=gnu++11 -Wno-write-strings -DPDF_PARSER_ONLY -I"$XP/goo" -I"$XP/fofi" -I"$XP/xpdf" -I"$XP/splash")
+  for f in goo/FixedPoint goo/GHash goo/GList goo/GString goo/Trace goo/gfile goo/gmem goo/gmempp \
+           fofi/FoFiBase fofi/FoFiEncodings fofi/FoFiIdentifier fofi/FoFiTrueType fofi/FoFiType1 fofi/FoFiType1C \
+           xpdf/AcroForm xpdf/Annot xpdf/Array xpdf/BuiltinFont xpdf/BuiltinFontTables xpdf/CMap xpdf/Catalog \
+           xpdf/CharCodeToUnicode xpdf/Decrypt xpdf/Dict xpdf/Error xpdf/FontEncodingTables xpdf/Function xpdf/Gfx \
+           xpdf/GfxFont xpdf/GfxState xpdf/GlobalParams xpdf/JArithmeticDecoder xpdf/JBIG2Stream xpdf/JPXStream \
+           xpdf/Lexer xpdf/Link xpdf/NameToCharCode xpdf/Object xpdf/OptionalContent xpdf/Outline xpdf/OutputDev \
+           xpdf/PDF417Barcode xpdf/PDFDoc xpdf/PDFDocEncoding xpdf/PSTokenizer xpdf/Page xpdf/Parser xpdf/SecurityHandler \
+           xpdf/Stream xpdf/TextString xpdf/UnicodeMap xpdf/UnicodeRemapping xpdf/UTF8 xpdf/XFAScanner xpdf/XRef xpdf/Zoox; do
+    add xpdf_${f//\//_} "$XP/$f.cc" "${XPF[@]}"
+  done
+  add pdftexdir_pdftoepdf "$SRC/pdftexdir/pdftoepdf.cc" "${XPF[@]}"
+  for f in png_glue; do add $f "$ROOT/src/$f.c"; done
 fi
 for f in basechsuffix chartostring coredump eofeoln fprintreal input2int inputint openclose \
          printversion setupvar uexit usage version zround; do

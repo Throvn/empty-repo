@@ -63,4 +63,14 @@ for dp, dn, fn in sorted(os.walk(root)):
             continue
         seen.add(base)
         out.append("%s %s <%s\n" % (base, m.group(1).decode(), f))
-sys.stdout.write("".join(out))
+# pdfTeX warns about every duplicated entry ("fontmap entry ... already exists"): keep the first of each TFM name
+seen_names, final = set(), []
+for chunk in out:
+    for line in chunk.splitlines():
+        t = line.split()
+        if not t or t[0].startswith("%"):
+            continue
+        if t[0] in seen_names:
+            continue
+        seen_names.add(t[0]); final.append(line)
+sys.stdout.write("\n".join(final) + "\n")

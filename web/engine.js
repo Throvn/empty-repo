@@ -27,20 +27,44 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
 
 // Where each kpathsea "format" may find files in the packed tree.
 const FMT_DIRS = {
-  tex: ['texmf/tex/'], tfm: ['texmf/fonts/tfm/'], ofm: ['texmf/fonts/ofm/'], vf: ['texmf/fonts/vf/'],
+  tex: ['texmf/tex/'],       // (see texTiers: TEXINPUTS.<program> in texmf.cnf)
+  tfm: ['texmf/fonts/tfm/'], ofm: ['texmf/fonts/ofm/'], vf: ['texmf/fonts/vf/'],
   type1: ['texmf/fonts/type1/'], truetype: ['texmf/fonts/truetype/'], opentype: ['texmf/fonts/opentype/'],
   enc: ['texmf/fonts/enc/'], map: ['texmf/fonts/map/'], fmt: ['fmt/', 'texmf/web2c/'],
   pool: ['texmf/web2c/'], web2c: ['texmf/web2c/'], pdftex: ['texmf/web2c/', 'texmf/tex/'],
   header: ['texmf/'], misc: ['texmf/fonts/'], sfd: ['texmf/fonts/sfd/'], cmap: ['texmf/fonts/cmap/'],
   pk: [], afm: ['texmf/fonts/afm/'], lig: ['texmf/fonts/lig/'],
 };
-// files written by LaTeX that the *next* run reads back: carried across runs like TeXpresso does
-const CARRY = /\.(aux|toc|lof|lot|out|nav|snm|bbl|idx|ind|glo|gls|brf)$/;
+// Every file a run writes (aux, toc, out, bbl, spl, tdo, glsdefs, hd, ... or a user's own \openout) exists for the next run,
+// exactly as on a real file system; only the final artefacts are not fed back as inputs.
+const NO_CARRY = /\.(pdf|log|dvi|xdv|fmt|synctex(\.gz)?)$/;
+
+/** TEXINPUTS.<program> from texmf.cnf: directories are searched in this order, the last one being everything below tex/ */
+function texTiers(prog) {
+  const t = d => 'texmf/tex/' + d + '/';
+  if (/latex/.test(prog)) return [t('latex'), t('pdftex'), t('generic'), 'texmf/tex/'];           // pdflatex, latex ...
+  if (/^(pdf)?etex$|^pdftex$|^initex$|^tex$/.test(prog)) return [t('plain'), t('generic'), 'texmf/tex/'];
+  return [t('pdftex'), t('generic'), 'texmf/tex/'];
+}
 
 export class ExitError extends Error { constructor(code) { super('exit ' + code); this.code = code; } }
 
 // ---------------------------------------------------------------------------------------------
+/** one file the engine can read. System files may be *lazy*: their bytes are fetched on first access. */
+class Entry {
+  constructor(id, path, user, mtime) { this.id = id; this.path = path; this.user = user; this.gone = false; this.mtime = mtime; this._d = null; this._lazy = null; this.bin = undefined; }
+  get data() {
+    if (this._d) return this._d;
+    const z = this._lazy;
+    if (z) { if (!z.cache.d) z.cache.d = z.read(z.start, z.end); return z.cache.d; }
+    return (this._d = new Uint8Array(0));
+  }
+  set data(v) { this._d = v; this._lazy = null; }
+  get size() { return this._lazy && !this._d ? this._lazy.end - this._lazy.start : this.data.length; }
+}
+
 export class HostFS {
+  static now() { return Math.floor(Date.now() / 1000); }
   constructor() {
     this.byId = [];            // id -> entry
     this.byPath = new Map();   // path -> entry
@@ -51,28 +75,48 @@ export class HostFS {
   fork() {
     const f = new HostFS();
     for (const e of this.byId) if (!e.user) {
-      const c = { ...e, id: f.byId.length }; f.byId.push(c); f.byPath.set(c.path, c);
+      const c = Object.assign(Object.create(Entry.prototype), e); c.id = f.byId.length;     // shares _lazy.cache: bytes are fetched once
+      f.byId.push(c); f.byPath.set(c.path, c);
       const base = c.path.slice(c.path.lastIndexOf('/') + 1);
       let l = f.byBase.get(base); if (!l) f.byBase.set(base, l = []); l.push(c);
     }
     f.dirs = new Set(this.dirs);
     return f;
   }
-  _add(path, data, user) {
+  _entry(path, user, mtime) {
     const old = this.byPath.get(path);
-    if (old) { old.data = data; old.gone = false; old.user = user; old.bin = undefined; return old; }   // ids are stable per path
-    const e = { id: this.byId.length, path, data, user, gone: false };
+    if (old) return old;
+    const e = new Entry(this.byId.length, path, user, mtime);
     this.byId.push(e); this.byPath.set(path, e);
     const base = path.slice(path.lastIndexOf('/') + 1);
     let l = this.byBase.get(base); if (!l) this.byBase.set(base, l = []); l.push(e);
     for (let i = path.indexOf('/'); i >= 0; i = path.indexOf('/', i + 1)) this.dirs.add(path.slice(0, i));
     return e;
   }
-  /** system file (read-only, shared; e.g. out of the emscripten file_packager blob) */
+  _add(path, data, user) {
+    const old = this.byPath.get(path);
+    if (old) {                                  // ids are stable per path
+      if (!bytesEqual(old.data, data)) old.mtime = HostFS.now();
+      old.data = data; old.gone = false; old.user = user; old.bin = undefined; return old;
+    }
+    const e = this._entry(path, user, user ? HostFS.now() : 1700000000);
+    e.data = data; return e;
+  }
+  /** system file (read-only, shared; e.g. the pre-built format) */
   addSystemFile(path, data) { return this._add(path, data, false); }
-  /** pack = {data: Uint8Array, files: [{filename,start,end}]} as written by emscripten's file_packager */
+  /** pack = {data: Uint8Array, files: [{filename,start,end}]} as written by emscripten's file_packager (all in memory) */
   addPack(data, meta) {
     for (const f of meta.files) this._add(f.filename.replace(/^\/+/, ''), data.subarray(f.start, f.end), false);
+  }
+  /** same index, but bytes are fetched on first use through read(start, end) -> Uint8Array (synchronous) */
+  addLazyPack(read, meta) {
+    const lazy = (path, start, end) => { const e = this._entry(path, false, 1700000000); e._lazy = { start, end, read, cache: { d: null } }; };
+    if (meta.f) for (const [d, n, start, end] of meta.f) lazy(meta.d[d] ? meta.d[d] + '/' + n : n, start, end);     // compact index
+    else for (const f of meta.files) lazy(f.filename.replace(/^\/+/, ''), f.start, f.end);                         // file_packager's own
+  }
+  /** a small eagerly-loaded pack whose files are also in the lazy pack: seed their caches */
+  seedFromPack(data, meta) {
+    for (const f of meta.files) { const e = this.byPath.get(f.filename.replace(/^\/+/, '')); if (e && e._lazy) e._lazy.cache.d = data.subarray(f.start, f.end); }
   }
   /** user project file: this is what changes between incremental compiles */
   setUserFile(path, data) {
@@ -83,9 +127,13 @@ export class HostFS {
   lookup(path) { const e = this.byPath.get(path); return e && !e.gone ? e : null; }
   userEntries() { return this.byId.filter(e => e.user && !e.gone); }
   search(name, fmt) {
-    const l = this.byBase.get(name); if (!l) return null;
-    const dirs = FMT_DIRS[fmt] || [''];
-    for (const e of l) if (!e.gone && !e.user && dirs.some(d => e.path.startsWith(d))) return e;
+    const slash = name.lastIndexOf('/');
+    const l = this.byBase.get(slash < 0 ? name : name.slice(slash + 1)); if (!l) return null;
+    let dirs;
+    if (fmt.startsWith('tex@')) dirs = texTiers(fmt.slice(4));
+    else dirs = FMT_DIRS[fmt] || [''];
+    for (const d of dirs)                                    // earlier tiers win, as in kpathsea's path list
+      for (const e of l) if (!e.gone && !e.user && e.path.startsWith(d) && (slash < 0 || e.path.endsWith('/' + name))) return e;
     return null;
   }
 }
@@ -194,8 +242,9 @@ export class TexEngine {
       env: {
         host_lookup: p => self._lookup(self._cstr(p)),
         host_isdir: p => (self.fs.dirs.has(self._cstr(p).replace(/\/+$/, '')) ? 1 : 0),
-        host_size: id => self.fs.byId[id].data.length,
+        host_size: id => self.fs.byId[id].size,
         host_is_user: id => (self.fs.byId[id].user ? 1 : 0),
+        host_mtime: id => self.fs.byId[id].mtime >>> 0,
         host_read: (id, off, dst, len) => self._read(id, off, dst, len),
         host_search: (n, f, out, cap) => self._search(n, f, out, cap),
         host_want_snapshot: u => self._wantSnapshot(u),
@@ -391,11 +440,11 @@ export class TexEngine {
    * (TeXpresso's "rollback") and re-run only from there.  Cross-reference files (.aux ...) written
    * by one run are fed to the next, and the engine re-runs until they stop changing.
    */
-  compile(files, { main = 'main.tex', maxPasses = 3, extraArgs = [], incremental = this.incremental } = {}) {
+  compile(files, { main = 'main.tex', maxPasses = 3, extraArgs = [], incremental = this.incremental, argv: argvOverride = null } = {}) {
     const t0 = now();
     this.incremental = incremental;
     const job = main.replace(/\.tex$/, '');
-    const argv = ['pdflatex', '-interaction=nonstopmode', '-file-line-error', '-fmt=pdflatex',
+    const argv = argvOverride || ['pdflatex', '-interaction=nonstopmode', '-file-line-error', '-fmt=pdflatex',
                   ...extraArgs, main];
     // sync user files into the host FS (carried aux files stay)
     const seen = new Set();
@@ -459,7 +508,7 @@ export class TexEngine {
   _carryAuxFiles() {
     let changed = false;
     for (const f of this.listFiles()) {
-      if (!CARRY.test(f.name)) continue;
+      if (NO_CARRY.test(f.name)) continue;
       const bytes = this.getFile(f.name), old = this.fs.lookup(f.name);
       if (old && bytesEqual(old.data, bytes)) continue;
       this.fs.setUserFile(f.name, bytes).carried = true;
