@@ -271,6 +271,44 @@ D('lang-greek-missing', r'x', r'\usepackage[greek]{babel}')
 D('lang-babel-shorthands', r'\selectlanguage{french}«~Bonjour~» ; Que voulez-vous ? \og citation \fg{} 1\ier{} 2\ieme{}\selectlanguage{german}"a "o "u "s "ck "`quoted"\textquotesingle', r'\usepackage[T1]{fontenc}\usepackage[french,german,english]{babel}')
 D('lang-hyphenation-showhyphens', r'\showhyphens{Donaudampfschifffahrtsgesellschaft}\selectlanguage{ngerman}\showhyphens{Donaudampfschifffahrtsgesellschaft}', r'\usepackage[T1]{fontenc}\usepackage[ngerman,english]{babel}\usepackage{hyphenat}')
 
+# ------------------------------------------------------------------ BibTeX (bibtex.wasm between pdfLaTeX passes)
+BIB = r"""@string{jan = "January"}
+@string{acm = {ACM Press}}
+@book{knuth84, author = {Donald E. Knuth}, title = {The {TeXbook}}, publisher = {Addison-Wesley}, year = 1984, address = {Reading, MA}}
+@article{lamport86, author = {Leslie Lamport}, title = {{\LaTeX}: A Document Preparation System}, journal = {Software}, year = {1986}, volume = 1, number = {2}, pages = {10--20}, month = jan}
+@inproceedings{conf95, author = {Alice Author and Bob B{\"o}hm and Carol {van der} Berg}, title = {A Conference Paper}, booktitle = {Proc. of the 1st Conf.}, year = 1995, publisher = acm, pages = {1--10}}
+@misc{web1, author = {Anon}, title = {Some \emph{Web} Page}, howpublished = {\url{http://example.org}}, year = 2020, note = {Accessed: today}}
+@phdthesis{phd, author = {Dee, Dave}, title = {Thesis}, school = {University}, year = 2001}
+@techreport{tr, author = {Tee Ar}, title = {Report}, institution = {Inst}, year = 2002, number = {42}}
+@incollection{chap, author = {Ch Ap}, title = {Chapter}, booktitle = {The Book}, editor = {Ed Itor}, publisher = {Pub}, year = 2003, pages = {5--9}}
+@article{many, author = {A. One and B. Two and C. Three and D. Four and E. Five and F. Six and G. Seven and H. Eight}, title = {Many Authors}, journal = {J.}, year = 2004}
+@book{xref, crossref = {knuth84}, title = {Cross referenced}, year = 1985}
+@unpublished{unp, author = {U. N. Published}, title = {Not out}, note = {In preparation}}
+"""
+for st in ['plain', 'unsrt', 'alpha', 'abbrv', 'ieeetr', 'acm', 'siam', 'apalike', 'amsplain', 'amsalpha', 'plainnat', 'abbrvnat', 'unsrtnat', 'nonexistentstyle']:
+    nat = st.endswith('nat')
+    D('bib-style-' + st, r'\cite{knuth84}\citep{lamport86}\citet{conf95,web1}\nocite{phd,tr,chap,many,xref,unp}' if nat else r'\cite{knuth84} \cite[p.~3]{lamport86} \cite{conf95,web1}\nocite{phd,tr,chap,many,xref,unp}' + '\n\\bibliographystyle{%s}\\bibliography{refs}' % st,
+      (r'\usepackage{natbib}' if nat else ''), files={'refs.bib': BIB}) if False else None
+    body = (r'\citet{knuth84} \citep{lamport86} \citep[see][p.~3]{conf95,web1}' if nat else r'\cite{knuth84} \cite[p.~3]{lamport86} \cite{conf95,web1}') + r'\nocite{phd,tr,chap,many,xref,unp}' + '\n\\bibliographystyle{%s}\\bibliography{refs}' % st
+    D('bib-style-' + st, body, (r'\usepackage{natbib}' if nat else ''), files={'refs.bib': BIB})
+D('bib-nocite-all', r'\nocite{*}\bibliographystyle{plain}\bibliography{refs}', files={'refs.bib': BIB})
+D('bib-two-files', r'\cite{knuth84,extra}\bibliographystyle{plain}\bibliography{refs,more}', files={'refs.bib': BIB, 'more.bib': '@article{extra, author={X Tra}, title={Extra}, journal={J}, year=2010}'})
+D('bib-missing-bib', r'\cite{k}\bibliographystyle{plain}\bibliography{nonexistent}')
+D('bib-missing-entry', r'\cite{doesnotexist,knuth84}\bibliographystyle{plain}\bibliography{refs}', files={'refs.bib': BIB})
+D('bib-no-cites', r'\bibliographystyle{plain}\bibliography{refs}', files={'refs.bib': BIB})
+D('bib-no-style', r'\cite{knuth84}\bibliography{refs}', files={'refs.bib': BIB})
+D('bib-bad-entries', r'\nocite{*}\bibliographystyle{plain}\bibliography{bad}', files={'bad.bib': '@article{a, author = {A}, title = {No journal}, year = 2000}\n@book{b, title = "unbalanced {brace"}\n@article{a, author={Dup}, title={Duplicate key}, journal={J}, year=2001}\n@foo{c, x = 1}\n@book{d, author = {D}, title = {T}, publisher = {P}, year = {2000} extra junk}\njunk outside entries\n@comment{ignored}\n@preamble{"\\newcommand{\\noop}[1]{}"}\n@book{e, author = {E}, title = {\\noop{T}itle}, publisher = {P}, year = 2002}'})
+D('bib-empty-bib', r'\nocite{*}\bibliographystyle{plain}\bibliography{empty}', files={'empty.bib': ''})
+D('bib-utf8', r'\nocite{*}\bibliographystyle{plain}\bibliography{u}', r'\usepackage[utf8]{inputenc}\usepackage[T1]{fontenc}', files={'u.bib': '@book{u1, author = {José Álvarez and Björn Müller}, title = {Über Ästhetik}, publisher = {Verlag}, year = 2000}\n@article{u2, author={你 好}, title={CJK}, journal={J}, year=1}'})
+D('bib-many', r'\nocite{*}\bibliographystyle{plain}\bibliography{many}', files={'many.bib': '\n'.join('@article{k%d, author = {Author%d, A.}, title = {Title number %d}, journal = {Journal}, year = %d, volume = %d, pages = {%d--%d}}' % (i, i, i, 1900 + i % 120, i % 30, i, i + 9) for i in range(600))})
+D('bib-include-nested-aux', r'\include{ch1}\include{ch2}\bibliographystyle{plain}\bibliography{refs}', files={'refs.bib': BIB, 'ch1.tex': r'\section{One}\cite{knuth84}', 'ch2.tex': r'\section{Two}\cite{lamport86}\cite{conf95}'})
+D('bib-user-bst', r'\cite{knuth84}\bibliographystyle{my}\bibliography{refs}', files={'refs.bib': BIB, 'my.bst': 'ENTRY {author title year} {} {}\nFUNCTION {book} { "[" write$ cite$ write$ "]" write$ newline$ }\nREAD\nITERATE {call.type$}\nFUNCTION {begin.bib} {preamble$ write$}\nBEGIN {begin.bib}'})
+D('bib-hyperref-cite', r'\cite{knuth84}\citeauthor{lamport86}\bibliographystyle{plain}\bibliography{refs}', r'\usepackage{hyperref}\usepackage{natbib}', files={'refs.bib': BIB})
+D('bib-biblatex-backend-bibtex', r'\textcite{knuth84} \parencite{lamport86}\printbibliography', r'\usepackage[backend=bibtex,style=authoryear]{biblatex}\addbibresource{refs.bib}', files={'refs.bib': BIB})
+D('bib-biblatex-default-biber', r'\cite{knuth84}\printbibliography', r'\usepackage{biblatex}\addbibresource{refs.bib}', files={'refs.bib': BIB})
+D('bib-multibib-missing', r'\cite{a}\bibliographystyle{plain}\bibliography{refs}', r'\usepackage{multibib}', files={'refs.bib': BIB})
+D('bib-thebibliography-and-cite-unresolved', r'\cite{a}\cite{b}\begin{thebibliography}{9}\bibitem{a}A.\end{thebibliography}')
+
 # ------------------------------------------------------------------ PDF inclusion (xpdf)
 G = r'\usepackage{graphicx}'
 for nm, body in {

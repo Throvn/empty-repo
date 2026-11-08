@@ -16,7 +16,7 @@ const files = { ...loadAssets(IMAGES), ...loadAssets(path.join(here, 'corpus/ass
 const walk = (dir, pre = '') => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const rel = pre + e.name; if (e.isDirectory()) walk(path.join(dir, e.name), rel + '/'); else files[rel] = new Uint8Array(fs.readFileSync(path.join(dir, e.name))); } };
 if (fs.statSync(target).isDirectory()) walk(target); else files['main.tex'] = new Uint8Array(fs.readFileSync(target));
 const dec = b => Buffer.from(b).toString('latin1'), enc = s => new Uint8Array(Buffer.from(s, 'latin1'));
-const texNames = Object.keys(files).filter(f => f.endsWith('.tex') || f.endsWith('.sty'));
+const texNames = Object.keys(files).filter(f => /\.(tex|sty|bib|bst)$/.test(f));
 
 const SNIPPETS = ['\\textbf{x}', '$x^2$', '\\section{R}', '\\footnote{f}', '\\label{r}', '\\ref{r}', '\\newpage', '}', '{', '\\begin{itemize}', '\\end{itemize}', '\\par', '\\\\', '%', '\\def\\a{b}', '\\emph{', '$$', '\\input{main}', '\\cite{q}', '\\hspace{1cm}', '\\undefinedmacro', '\\clearpage', '\\tableofcontents', '\\verb|x|', '&', '#', '^', '\\end{document}', '\\begin{figure}\\end{figure}', '\\pagebreak', '\\vspace{3cm}', 'lorem ipsum ', '\\item x', '\\bibitem{q}', '\\index{z}'];
 function mutate(text) {

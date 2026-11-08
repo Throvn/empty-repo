@@ -49,6 +49,7 @@ EXPORT void sp_set(void *p) { _emscripten_stack_restore(p); }
 /* Top of the heap: everything the process can have touched lives in [0, heap_top()). */
 EXPORT unsigned heap_top(void) { return (unsigned)(size_t)sbrk(0); }
 
+#ifndef NO_INPUT_LINE_HOOK
 /* ---- snapshot hook: wraps texmfmp.c:input_line (linker --wrap=input_line) ---- */
 extern int __real_input_line(FILE *f);
 int __wrap_input_line(FILE *f) {
@@ -56,3 +57,4 @@ int __wrap_input_line(FILE *f) {
   if (u && host_want_snapshot(u)) host_snapshot();
   return __real_input_line(f);
 }
+#endif

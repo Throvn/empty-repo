@@ -15,6 +15,8 @@ R="$WORK/native-ref"; T="$WORK/texmf"; mkdir -p "$R" /work
   echo "ENCFONTS = $T/fonts/enc//"
   echo "TEXFONTMAPS = $T/fonts/map//"
   echo "TCXPATH = $T/web2c"
+  echo "BSTINPUTS = .:$T/bibtex/bst//"
+  echo "BIBINPUTS = ."
   echo "WEB2C = $T/web2c"          # kpse_web2c_format: where cp227.tcx lives
   echo "TEXFORMATS = $R"
   echo "TEXMFCNF = $R"
@@ -31,6 +33,7 @@ PY
 } > "$R/texmf.cnf"
 ln -sf "$WORK/gen/pdftex.native" "$R/pdflatex"   # invoked as `pdflatex`, like the real thing
 ln -sf "$WORK/gen/pdftex.native" "$R/pdftex"
+ln -sf "$WORK/native-tools/bibtex" "$R/bibtex"
 cd "$R"
 export TEXMFCNF="$R" SOURCE_DATE_EPOCH=1700000000 FORCE_SOURCE_DATE=1
 "$WORK/gen/pdftex.native" -ini -interaction=nonstopmode -jobname=pdflatex -translate-file=cp227.tcx '*pdflatex.ini' > fmt.log 2>&1 || true

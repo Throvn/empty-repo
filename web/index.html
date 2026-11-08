@@ -42,7 +42,7 @@
   #src { flex: 1; min-width: 0; resize: none; border: 0; padding: 1rem; outline: none; background: var(--panel); color: var(--ink); white-space: pre; overflow: auto;
     font: 13px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; tab-size: 2; }
   #binpane { flex: 1; padding: 1rem; overflow: auto; } #binpane img { max-width: 100%; border: 1px solid var(--line); }
-  #view { overflow: auto; background: #8a8a90; padding: 12px 0; min-width: 0; }
+  #view { overflow: auto; background: #8a8a90; padding: 12px 0; min-width: 0; position: relative; }
   #view canvas { display: block; margin: 0 auto 12px; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.4); }
   #view .ph { margin: 0 auto 12px; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.4); }
   #bottom { grid-column: 1 / -1; border-top: 1px solid var(--line); background: var(--panel); }
@@ -65,6 +65,7 @@
   <button id="compile" class="primary" disabled>Compile</button>
   <label><input type="checkbox" id="live" checked> live</label>
   <label><input type="checkbox" id="incr" checked> incremental</label>
+  <label title="scroll the PDF to the line under the cursor (Ctrl+J does it once); click the PDF to jump to the source"><input type="checkbox" id="follow" checked> sync</label>
   <label>main <select id="mainsel"></select></label>
   <button id="long" title="a 60-section document: watch incremental compilation skip the unchanged prefix">Long sample</button>
   <a id="dl" download="main.pdf" hidden><button>Download PDF</button></a>
@@ -92,6 +93,7 @@
 import { PdfView } from './viewer.js';
 import { Project, isText } from './project.js';
 import { parseProblems } from './problems.js';
+import { parseSynctex, inverse, forward } from './synctex.js';
 
 const SAMPLE = String.raw`\documentclass[11pt]{article}
 \usepackage[T1]{fontenc}
@@ -152,6 +154,8 @@ const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&
 let project = await Project.load();
 if (!project || !project.files.size) { project = new Project(); project.setText('main.tex', SAMPLE); }
 let problems = [];
+let sxBytes = null, sx = null;                    // SyncTeX of the latest PDF (parsed on first use)
+const syncData = () => (sx ??= sxBytes ? parseSynctex(new TextDecoder().decode(sxBytes)) : null);
 
 const worker0 = () => {
   const w = new Worker('worker.js', { type: 'module' });
@@ -274,7 +278,8 @@ function onMessage(ev) {
     autoCompile = true;
   } else if (m.type === 'result') {
     busy = !m.final;
-    $('log').textContent = m.log || ''; $('console').textContent = m.console || '';
+    if (m.synctex) { sxBytes = m.synctex; sx = null; }
+    $('log').textContent = (m.log || '') + (m.bibtexLog ? '\n\n===== BibTeX log =====\n' + m.bibtexLog : ''); $('console').textContent = m.console || '';
     problems = parseProblems(m.log || '', project.main); renderProblems();
     const modes = (m.pass ? 'pass ' + (m.pass + 1) + ': ' : '') + m.passes.map(p => p.mode === 'resume' ? `resumed@${p.resumedAtEvent}` : p.mode).join(' + ');
     if (m.pdf) {
@@ -299,7 +304,7 @@ function compile() {
   if (busy) { dirty = true; return; }
   busy = true; setStatus('compiling…');
   clearTimeout(watchdog); watchdog = setTimeout(() => { $('stop').hidden = false; }, 8000);
-  worker.postMessage({ type: 'compile', id: nextId++, main: project.main, incremental: $('incr').checked, maxPasses: 3 });
+  worker.postMessage({ type: 'compile', id: nextId++, main: project.main, incremental: $('incr').checked, maxPasses: 3, synctex: true });
 }
 let timer = null;
 src.addEventListener('input', () => {
@@ -315,7 +320,25 @@ $('stop').onclick = () => { autoCompile = false; worker.terminate(); $('stop').h
 
 worker = worker0(); worker.postMessage({ type: 'init' });
 renderFiles(); openFile(project.get(project.active) ? project.active : project.main);
-window.__app = { project, openFile, compile, addFile };       // handy for tests / the console
+// ------------------------------------------------------------------------------------------ SyncTeX
+$('view').addEventListener('click', e => {                         // PDF -> source
+  const p = view.pointAt(e), d = syncData(); if (!p || !d) return;
+  const hit = inverse(d, p.page, p.x, p.y);
+  if (hit && project.get(hit.file)) { openFile(hit.file, hit.line); }
+});
+function locate(line) {                                             // source -> PDF
+  const d = syncData(); if (!d) return;
+  const f = forward(d, project.active, line);
+  if (f) view.reveal(f.page, f.x, f.y, f.w, f.h);
+}
+const cursorLine = () => src.value.slice(0, src.selectionStart).split('\n').length;
+let lastLoc = 0;
+const maybeFollow = () => { if (!$('follow').checked || src.hidden) return; const l = cursorLine(); if (l !== lastLoc) { lastLoc = l; locate(l); } };
+src.addEventListener('keyup', () => { clearTimeout(maybeFollow.t); maybeFollow.t = setTimeout(maybeFollow, 250); });
+src.addEventListener('click', () => { clearTimeout(maybeFollow.t); maybeFollow.t = setTimeout(maybeFollow, 150); });
+addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'j') { e.preventDefault(); locate(cursorLine()); } });
+
+window.__app = { project, openFile, compile, addFile, syncData, locate, inverse, forward };       // handy for tests / the console
 </script>
 </body>
 </html>

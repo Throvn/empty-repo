@@ -21,7 +21,7 @@ $(STAMP)/native: $(STAMP)/sources scripts/20-native-gen.sh
 
 wasm: $(STAMP)/wasm                           # build/web/pdftex.wasm
 $(STAMP)/wasm: $(STAMP)/toolchain $(STAMP)/native scripts/30-build-wasm.sh $(wildcard src/*.c src/*.h src/shim/*.h)
-	scripts/30-build-wasm.sh && touch $@
+	scripts/30-build-wasm.sh && ENGINE=bibtex scripts/30-build-wasm.sh && touch $@
 
 texlive: $(STAMP)/texlive                     # build/web/texlive.data (+ texlive.json)
 $(STAMP)/texlive: $(STAMP)/toolchain scripts/40-texlive-files.sh scripts/tools/mkmap.py | $(STAMP)
@@ -32,8 +32,8 @@ $(STAMP)/fmt: $(STAMP)/wasm $(STAMP)/texlive scripts/60-build-fmt.mjs
 	node scripts/60-build-fmt.mjs && touch $@
 
 web: $(STAMP)/web
-$(STAMP)/web: $(STAMP)/fmt $(wildcard web/*.js web/*.html) scripts/70-package-web.sh
-	scripts/70-package-web.sh && touch $@
+$(STAMP)/web: $(STAMP)/fmt $(wildcard web/*.js web/*.html) scripts/66-hotset.mjs scripts/70-package-web.sh
+	node scripts/66-hotset.mjs && scripts/70-package-web.sh && touch $@
 
 engines: $(STAMP)/engines                      # tex.wasm, etex.wasm: only for the trip tests
 $(STAMP)/engines: $(STAMP)/native scripts/30-build-wasm.sh $(wildcard src/*.c src/*.h)
@@ -45,8 +45,11 @@ trip: engines                                   # Knuth's TRIP test on tex.wasm,
 diff: web                                       # differential corpus: byte-identical to native pdftex
 	scripts/65-native-ref.sh >/dev/null && node tests/diff.mjs
 
+fuzz: web                                       # random edits: incremental == from-scratch
+	node tests/fuzz.mjs
+
 test: web
-	node tests/incremental.mjs && node tests/errors.mjs
+	node tests/incremental.mjs && node tests/errors.mjs && node tests/synctex.mjs
 
 bench: web
 	node tests/bench.mjs
@@ -59,4 +62,4 @@ clean:
 distclean:
 	rm -rf build
 
-.PHONY: engines trip diff all toolchain sources native wasm texlive fmt web test bench serve clean distclean
+.PHONY: engines trip diff fuzz all toolchain sources native wasm texlive fmt web test bench serve clean distclean

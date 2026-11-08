@@ -148,6 +148,7 @@ static const struct fmt { kpse_file_format_type f; const char *tag; const char *
   {kpse_miscfonts_format, "misc", ""}, {kpse_program_text_format, "tex", ""},
   {kpse_sfd_format, "sfd", ".sfd"}, {kpse_cmap_format, "cmap", ""},
   {kpse_mlbib_format, "tex", ""}, {kpse_pict_format, "tex", ".eps:.pdf:.png:.jpg:.jpeg"},
+  {kpse_bst_format, "bst", ".bst"}, {kpse_bib_format, "bib", ".bib"},
   {kpse_pk_format, "pk", ".pk"}, {kpse_afm_format, "afm", ".afm"}, {kpse_lig_format, "lig", ".lig"},
   {kpse_last_format, 0, 0}};
 

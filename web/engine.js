@@ -33,6 +33,7 @@ const FMT_DIRS = {
   enc: ['texmf/fonts/enc/'], map: ['texmf/fonts/map/'], fmt: ['fmt/', 'texmf/web2c/'],
   pool: ['texmf/web2c/'], web2c: ['texmf/web2c/'], pdftex: ['texmf/web2c/', 'texmf/tex/'],
   header: ['texmf/'], misc: ['texmf/fonts/'], sfd: ['texmf/fonts/sfd/'], cmap: ['texmf/fonts/cmap/'],
+  bst: ['texmf/bibtex/bst/'], bib: ['texmf/bibtex/bib/'],
   pk: [], afm: ['texmf/fonts/afm/'], lig: ['texmf/fonts/lig/'],
 };
 // Every file a run writes (aux, toc, out, bbl, spl, tdo, glsdefs, hd, ... or a user's own \openout) exists for the next run,
@@ -212,6 +213,10 @@ export class TexEngine {
   static async create(o) {
     const e = new TexEngine(o);
     await e._instantiate(o.wasm);
+    if (o.bibtexWasm) {          // bibtex.wasm: a second, tiny engine on the same file system, run between pdfLaTeX passes
+      e.bib = new TexEngine({ fs: o.fs, env: o.env, snapshotIntervalMs: 1e9 });
+      await e.bib._instantiate(o.bibtexWasm); e.bib.incremental = false;
+    }
     return e;
   }
 
@@ -361,7 +366,7 @@ export class TexEngine {
     for (;;) {
       try { ret = started(); }
       catch (e) { if (e instanceof ExitError) return e.code; throw e; }
-      if (this.x.asyncify_get_state() !== 1) return ret;   // not unwinding: finished normally
+      if (!this.x.asyncify_get_state || this.x.asyncify_get_state() !== 1) return ret;   // not unwinding: finished normally (bibtex.wasm has no asyncify)
       this.x.asyncify_stop_unwind();
       this._takeSnapshot();
       this.x.asyncify_start_rewind(this.dataPtr);
@@ -440,12 +445,12 @@ export class TexEngine {
    * (TeXpresso's "rollback") and re-run only from there.  Cross-reference files (.aux ...) written
    * by one run are fed to the next, and the engine re-runs until they stop changing.
    */
-  compile(files, { main = 'main.tex', maxPasses = 3, extraArgs = [], incremental = this.incremental, argv: argvOverride = null } = {}) {
+  compile(files, { main = 'main.tex', maxPasses = 3, extraArgs = [], incremental = this.incremental, argv: argvOverride = null, synctex = false } = {}) {
     const t0 = now();
     this.incremental = incremental;
     const job = main.replace(/\.tex$/, '');
     const argv = argvOverride || ['pdflatex', '-interaction=nonstopmode', '-file-line-error', '-fmt=pdflatex',
-                  ...extraArgs, main];
+                  ...(synctex ? ['-synctex=-1'] : []), ...extraArgs, main];
     // sync user files into the host FS (carried aux files stay)
     const seen = new Set();
     for (const [p, d] of Object.entries(files)) { this.fs.setUserFile(p, d); seen.add(p); }
@@ -461,15 +466,17 @@ export class TexEngine {
       // remember which version of every user file this run consumes (before aux files get carried over)
       this.lastFiles = new Map(this.fs.userEntries().map(e => [e.path, e.data]));
       const exit = plan.mode === 'cold' ? this.run(argv) : this._resume(plan.snap);
-      const changed = this._carryAuxFiles();
-      this.result = { exit, pdf: this.getFile(job + '.pdf'), log: this.getFile(job + '.log') };
+      let changed = this._carryAuxFiles();
+      const bibChanged = this._runBibtex(job);
+      changed = changed || bibChanged;
+      this.result = { exit, pdf: this.getFile(job + '.pdf'), log: this.getFile(job + '.log'), bibtexLog: this.bibLog || '', synctex: synctex ? this.getFile(job + '.synctex') : null };
       passes.push({ mode: plan.mode, firstBad: plan.firstBad, resumedAtEvent: plan.snap ? plan.snap.traceLen : 0,
                     events: this.trace.length, snapshotsHeld: this.snapshots.length, ms: now() - p0 });
       converged = !changed;
       if (converged) break;                        // cross-references converged
     }
     const r = this.result || { exit: -1, pdf: null, log: null };
-    return { exit: r.exit, pdf: r.pdf, log: r.log ? dec.decode(r.log) : '', console: this.consoleOutput,
+    return { exit: r.exit, pdf: r.pdf, synctex: r.synctex || null, log: r.log ? dec.decode(r.log) : '', bibtexLog: r.bibtexLog || '', console: this.consoleOutput,
              converged, ms: now() - t0, passes, stats: { ...this.stats, snapshotsHeld: this.snapshots.length } };
   }
 
@@ -504,6 +511,33 @@ export class TexEngine {
     return snap ? { mode: 'resume', snap, firstBad } : { mode: 'cold', firstBad };
   }
 
+  /**
+   * Run bibtex when the document asks for it (\\bibdata in an .aux) and what bibtex depends on changed:
+   * the citation/style/data lines of every .aux, the .bib files and any user .bst.  The resulting .bbl is carried into
+   * the next LaTeX pass like any other file.  Returns true when the .bbl changed.
+   */
+  _runBibtex(job) {
+    if (!this.bib) return false;
+    const auxes = [...this.fs.userEntries()].filter(e => e.path.endsWith('.aux'));
+    let key = '', data = [];
+    for (const e of auxes) for (const l of dec.decode(e.data).split('\n')) if (/^\\(citation|bibdata|bibstyle|@input)/.test(l)) { key += l + '\n'; const m = /^\\bibdata\{(.*)\}/.exec(l); if (m) data.push(...m[1].split(',')); }
+    if (!data.length) return false;
+    for (const d of data) { const b = this.fs.lookup(d.endsWith('.bib') ? d : d + '.bib'); key += `[${d}:${b ? hashBytes(b.data) : 'missing'}]`; }
+    for (const e of this.fs.userEntries()) if (e.path.endsWith('.bst')) key += `[${e.path}:${hashBytes(e.data)}]`;
+    if (key === this._bibKey) return false;
+    this._bibKey = key;
+    const b = this.bib;
+    b._resetTo(b.initSnap); b.trace = []; b.stdout = []; b.snapshots = [];
+    b._start(['bibtex', job]);
+    const bbl = b.getFile(job + '.bbl'), blg = b.getFile(job + '.blg');
+    this.bibLog = blg ? dec.decode(blg) : b.consoleOutput;
+    if (!bbl) return false;
+    const old = this.fs.lookup(job + '.bbl');
+    if (old && bytesEqual(old.data, bbl)) return false;
+    this.fs.setUserFile(job + '.bbl', bbl).carried = true;
+    return true;
+  }
+
   /** Copy cross-reference files the engine wrote into the host FS for the next run. Returns true if any changed. */
   _carryAuxFiles() {
     let changed = false;
@@ -518,6 +552,7 @@ export class TexEngine {
   }
 }
 
+function hashBytes(b) { let h = 2166136261; for (let i = 0; i < b.length; i++) h = Math.imul(h ^ b[i], 16777619); return (h >>> 0).toString(16) + ':' + b.length; }
 function bytesEqual(a, b) {
   if (a === b) return true;
   if (!a || !b || a.length !== b.length) return false;

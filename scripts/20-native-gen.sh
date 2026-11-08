@@ -14,12 +14,13 @@ make -j"$(nproc)" >toplevel.log 2>&1                     # runs the sub-configur
 make -C texk/kpathsea -j"$(nproc)" >kpse.log 2>&1
 make -C texk/web2c -j"$(nproc)" pdftex >pdftex.log 2>&1
 # Knuth's tex, e-TeX + the trip-test tools (dvitype, pltotf, tftopl): used by tests/trip.mjs, tests/etrip.mjs
-make -C texk/web2c -j"$(nproc)" tex etex dvitype pltotf tftopl >tex.log 2>&1
+make -C texk/web2c -j"$(nproc)" tex etex bibtex dvitype pltotf tftopl >tex.log 2>&1
 mkdir -p "$GEN" "$WORK/native-tools"
 W="$N/texk/web2c"
 cp "$W"/texini.c "$W"/tex0.c "$W"/tex-pool.c "$W"/texd.h "$W"/texcoerce.h "$GEN/"
 cp "$W"/etexini.c "$W"/etex0.c "$W"/etex-pool.c "$W"/etexd.h "$W"/etexcoerce.h "$GEN/"
-cp "$W"/tex "$W"/etex "$W"/dvitype "$W"/pltotf "$W"/tftopl "$WORK/native-tools/"
+cp "$W"/bibtex.c "$W"/bibtex.h "$GEN/"
+cp "$W"/tex "$W"/etex "$W"/bibtex "$W"/dvitype "$W"/pltotf "$W"/tftopl "$WORK/native-tools/"
 cp "$W"/pdftexini.c "$W"/pdftex0.c "$W"/pdftex-pool.c "$W"/pdftexd.h "$W"/pdftexcoerce.h "$GEN/"
 cp "$W"/w2c/c-auto.h "$GEN/web2c-c-auto.h"
 cp "$N"/texk/kpathsea/c-auto.h "$GEN/kpathsea-c-auto.h"

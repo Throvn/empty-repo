@@ -8,6 +8,8 @@ import { loadSystemFS, newEngine, ROOT } from '../../scripts/node-common.mjs';
 export const ENV = { SOURCE_DATE_EPOCH: '1700000000', FORCE_SOURCE_DATE: '1' };
 const REF = path.join(ROOT, 'build/native-ref');
 const NATIVE = path.join(ROOT, 'build/native-ref/pdflatex');
+const BIBTEX = path.join(ROOT, 'build/native-ref/bibtex');
+function hashBytes(b) { let h = 2166136261; for (let i = 0; i < b.length; i++) h = Math.imul(h ^ b[i], 16777619); return (h >>> 0).toString(16) + ':' + b.length; }
 const NO_CARRY = /\.(pdf|log|dvi|xdv|fmt|synctex(\.gz)?)$/;   // everything else a run writes is an input of the next one
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const IMAGES = path.join(here, '..', 'images');
@@ -28,10 +30,22 @@ export function nativeCompile(files, { main = 'main.tex', passes = 3, extraArgs 
   const args = ini ? ['-ini', '-interaction=nonstopmode', '-file-line-error', main] : ['-interaction=nonstopmode', '-file-line-error', '-fmt=pdflatex', ...extraArgs, main];
   let exit = 0, t0 = performance.now();
   const snap = () => Object.fromEntries(fs.readdirSync(W).filter(f => fs.statSync(W + '/' + f).isFile() && !NO_CARRY.test(f) && !(f in files)).map(f => [f, fs.readFileSync(W + '/' + f).toString('latin1')]));
+  let bibKey = '';
+  const bibtex = () => {            // same rule as TexEngine._runBibtex: run when its inputs changed
+    let key = '', data = [];
+    for (const f of fs.readdirSync(W).filter(f => f.endsWith('.aux'))) for (const l of fs.readFileSync(W + '/' + f, 'latin1').split('\n')) if (/^\\(citation|bibdata|bibstyle|@input)/.test(l)) { key += l + '\n'; const m = /^\\bibdata\{(.*)\}/.exec(l); if (m) data.push(...m[1].split(',')); }
+    if (!data.length) return;
+    for (const d of data) { const b = d.endsWith('.bib') ? d : d + '.bib'; key += `[${d}:${fs.existsSync(W + '/' + b) ? hashBytes(fs.readFileSync(W + '/' + b)) : 'missing'}]`; }
+    for (const f of fs.readdirSync(W).filter(f => f.endsWith('.bst'))) key += `[${f}:${hashBytes(fs.readFileSync(W + '/' + f))}]`;
+    if (key === bibKey) return;
+    bibKey = key;
+    spawnSync(BIBTEX, [job], { maxBuffer: 1 << 28, cwd: W, env: { ...process.env, ...ENV, TEXMFCNF: REF }, timeout: 60000 });
+  };
   for (let p = 0; p < passes; p++) {
     const before = snap();
     const r = spawnSync(ini ? NATIVE.replace(/pdflatex$/, 'pdftex') : NATIVE, args, { maxBuffer: 1 << 28, cwd: W, env: { ...process.env, ...ENV, TEXMFCNF: REF }, timeout: 120000 });
     exit = r.status ?? -1;
+    bibtex();
     if (JSON.stringify(snap()) === JSON.stringify(before)) break;
   }
   const rd = f => (fs.existsSync(W + '/' + f) ? new Uint8Array(fs.readFileSync(W + '/' + f)) : null);
@@ -49,6 +63,8 @@ export function wasmCompile(engine, files, { main = 'main.tex', passes = 3, ini 
   const r = engine.compile(files, { main, maxPasses: passes, ...(ini ? { argv: ['pdftex', '-ini', '-interaction=nonstopmode', '-file-line-error', main] } : {}), ...o });
   const outputs = {};
   for (const f of engine.listFiles()) outputs[f.name] = engine.getFile(f.name);
+  if (engine.bib) for (const f of engine.bib.listFiles()) outputs[f.name] = engine.bib.getFile(f.name);      // bibtex's .bbl / .blg
+  for (const k of Object.keys(files)) delete outputs[k];       // inputs the run overwrote are not 'new outputs' (same rule as the native side)
   const rawLog = outputs[main.replace(/\.tex$/, '') + '.log'];
   return { exit: r.exit, pdf: r.pdf, log: rawLog ? Buffer.from(rawLog).toString('latin1') : r.log, outputs, ms: r.ms, raw: r };
 }

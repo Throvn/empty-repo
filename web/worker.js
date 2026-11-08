@@ -41,8 +41,9 @@ const project = {};          // name -> Uint8Array: the user's files (text files
 
 async function init() {
   const t0 = performance.now();
-  const [wasm, meta, fmt, hotMeta, hot] = await Promise.all([
+  const [wasm, bibtexWasm, meta, fmt, hotMeta, hot] = await Promise.all([
     fetchBytes('pdftex.wasm', 'pdfTeX engine'),
+    fetchBytes('bibtex.wasm', 'BibTeX').catch(() => null),
     fetchBytes('texlive.json', 'file index').then(b => JSON.parse(new TextDecoder().decode(b))),
     fetchBytes('pdflatex.fmt', 'LaTeX format'),
     fetch('hot.json').then(r => (r.ok ? r.json() : null)).catch(() => null),
@@ -52,9 +53,9 @@ async function init() {
   fs.addLazyPack(rangeReader('texlive.data'), meta);          // everything, on demand
   if (hot && hotMeta) fs.seedFromPack(hot, hotMeta);          // what a typical document needs, already in memory
   fs.addSystemFile('fmt/pdflatex.fmt', fmt);
-  engine = await TexEngine.create({ wasm, fs, env: {} });
+  engine = await TexEngine.create({ wasm, bibtexWasm, fs, env: {} });
   postMessage({ type: 'ready', ms: performance.now() - t0, simd: engine.snapper.useShadow,
-                wasmKB: wasm.length >> 10, packMB: +((meta.files.at(-1)?.end || 0) / 1048576).toFixed(0), files: meta.files.length });
+                wasmKB: wasm.length >> 10, packMB: +(Math.max(...(meta.f || meta.files).slice(-50).map(f => (f.end ?? f[3]))) / 1048576).toFixed(0), files: (meta.f || meta.files).length });
 }
 
 onmessage = async ev => {
@@ -69,11 +70,12 @@ onmessage = async ev => {
       // (each further pass resumes from the snapshot before the first changed .aux read).
       const t0 = performance.now(), passes = m.maxPasses ?? 3;
       for (let pass = 0; pass < passes; pass++) {
-        const r = engine.compile(project, { main: m.main || 'main.tex', maxPasses: 1, incremental: m.incremental });
+        const r = engine.compile(project, { main: m.main || 'main.tex', maxPasses: 1, incremental: m.incremental, synctex: m.synctex });
         const final = r.converged || pass === passes - 1;
         const pdf = r.pdf ? r.pdf.slice() : null;      // transfer a copy: the engine keeps its cached result
-        r.pdf = null;
-        postMessage({ type: 'result', id: m.id, ...r, pdf, final, pass, ms: performance.now() - t0 }, pdf ? [pdf.buffer] : []);
+        const sx = final && r.synctex ? r.synctex.slice() : null;
+        r.pdf = null; r.synctex = null;
+        postMessage({ type: 'result', id: m.id, ...r, pdf, synctex: sx, final, pass, ms: performance.now() - t0 }, [pdf && pdf.buffer, sx && sx.buffer].filter(Boolean));
         if (final) break;
       }
     }
