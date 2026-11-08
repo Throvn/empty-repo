@@ -8,7 +8,8 @@ DEBVER=2023.20240207-1
 TLPKGS="texlive-base texlive-latex-base texlive-latex-recommended texlive-latex-extra texlive-pictures texlive-science \
 texlive-publishers texlive-plain-generic texlive-bibtex-extra texlive-formats-extra texlive-fonts-recommended texlive-fonts-extra \
 texlive-lang-german texlive-lang-french texlive-lang-spanish texlive-lang-italian texlive-lang-portuguese texlive-lang-european \
-texlive-lang-polish texlive-lang-cyrillic texlive-lang-czechslovak"
+texlive-lang-polish texlive-lang-cyrillic texlive-lang-czechslovak texlive-lang-greek texlive-lang-other \
+texlive-humanities texlive-games texlive-pstricks"
 DL="$WORK/dl/debs"; XD="$WORK/debs-x"; TREE="$WORK/texmf"; OUT="$WORK/web"
 mkdir -p "$DL" "$XD" "$OUT"
 cd "$DL"

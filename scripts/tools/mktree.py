@@ -16,14 +16,15 @@ PKGS = ['texlive-base', 'texlive-latex-base', 'texlive-latex-recommended', 'texl
         'texlive-science', 'texlive-publishers', 'texlive-plain-generic', 'texlive-bibtex-extra', 'texlive-formats-extra',
         'texlive-fonts-recommended', 'lmodern', 'cm-super', 'cm-super-minimal',
         'texlive-lang-german', 'texlive-lang-french', 'texlive-lang-spanish', 'texlive-lang-italian', 'texlive-lang-portuguese',
-        'texlive-lang-european', 'texlive-lang-polish', 'texlive-lang-cyrillic', 'texlive-lang-czechslovak',
+        'texlive-lang-european', 'texlive-lang-polish', 'texlive-lang-cyrillic', 'texlive-lang-czechslovak', 'texlive-lang-greek', 'texlive-lang-other',
+        'texlive-humanities', 'texlive-games', 'texlive-pstricks',
         'texlive-fonts-extra']
 ROOTS = ['usr/share/texlive/texmf-dist', 'usr/share/texmf']
 # Distribution layers: what the format and a typical article/report/beamer document need ("core") and everything else ("extra").
 # The runtime loads layers independently (web/dist.js, dist.json), so a deployment may ship `core` only or add its own layers.
 def layer_of(pkg):
     return 'extra' if pkg in ('texlive-latex-extra', 'texlive-pictures', 'texlive-science', 'texlive-publishers', 'texlive-plain-generic',
-                              'texlive-bibtex-extra', 'texlive-formats-extra', 'texlive-fonts-extra') else 'core'
+                              'texlive-bibtex-extra', 'texlive-formats-extra', 'texlive-fonts-extra', 'texlive-humanities', 'texlive-games', 'texlive-pstricks', 'texlive-lang-other') else 'core'
 layers = {}        # tree path (relative to OUT) -> layer
 
 # engines/formats pdfTeX does not run: their macro trees are useless here
@@ -175,7 +176,7 @@ LANGS = [  # babel name, loadhyph file, synonyms
  ('croatian', 'loadhyph-hr.tex', []), ('slovenian', 'loadhyph-sl.tex', ['slovene']), ('hungarian', 'loadhyph-hu.tex', ['magyar']),
  ('romanian', 'loadhyph-ro.tex', []), ('turkish', 'loadhyph-tr.tex', []), ('serbian', 'loadhyph-sr-latn.tex', []),
  ('estonian', 'loadhyph-et.tex', []), ('lithuanian', 'loadhyph-lt.tex', []), ('latvian', 'loadhyph-lv.tex', []),
- ('galician', 'loadhyph-gl.tex', []), ('icelandic', 'loadhyph-is.tex', []), ('irish', 'loadhyph-ga.tex', []),
+ ('galician', 'loadhyph-gl.tex', []), ('greek', 'loadhyph-el-monoton.tex', ['monogreek']), ('polygreek', 'loadhyph-el-polyton.tex', []), ('ancientgreek', 'loadhyph-grc.tex', []), ('icelandic', 'loadhyph-is.tex', []), ('irish', 'loadhyph-ga.tex', []),
  ('welsh', 'loadhyph-cy.tex', []), ('esperanto', 'loadhyph-eo.tex', []), ('interlingua', 'loadhyph-ia.tex', []),
 ]
 dat = ['% language.dat -- generated for pdfTeX in wasm (English: traditional hyphen.tex patterns)', 'english hyphen.tex', '=usenglish', '=USenglish', '=american']

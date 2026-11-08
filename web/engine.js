@@ -71,6 +71,7 @@ export class HostFS {
     this.byPath = new Map();   // path -> entry
     this.byBase = new Map();   // basename -> [entry]
     this.dirs = new Set(['', '.', 'texmf']);
+    this._entry('/dev/null', false, 1700000000).data = new Uint8Array(0);   // packages probe it to tell *nix from Windows (ifplatform)
     this.layerInfo = new Map();   // distribution layers: name -> {name, files, bytes, overlay}
     this.gen = 0;                 // bumped whenever the set of system files changes (the engine then restarts cold)
   }
