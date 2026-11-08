@@ -21,7 +21,7 @@ web2c build) and outbound HTTPS to `archive.ubuntu.com`, `conda.anaconda.org` an
 
 ## What it supports
 
-* **pdfTeX/LaTeX** with the format `pdflatex.fmt`, any package of the (Ubuntu-packaged) TeX Live 2023 tree: ≈ 48 000 files, 610 MB in two layers, *lazily*
+* **pdfTeX/LaTeX** with the format `pdflatex.fmt`, any package of the (Ubuntu-packaged) TeX Live 2023 tree: ≈ 53 000 files, 780 MB in two layers, *lazily*
   fetched with HTTP Range requests (sync XHR inside the worker) — a page load transfers only the ≈ 8 MB "hot set"
   (`hot.data`: what a typical article/beamer/thesis touches) and the format; everything else is pulled on first use and cached.
 * **PNG** (all colour types and bit depths, interlaced, tRNS, gAMA/pHYs, 16-bit, truncated/broken files → same errors as native),
@@ -41,8 +41,8 @@ into the engine's virtual file system.
 ```jsonc
 // build/web/dist.json                        (written by scripts/40 / 70; a single layer's NAME.layer.json has the same shape)
 { "name": "texlive-2023 (Ubuntu 24.04 packages)", "format": "pdflatex.fmt",
-  "layers": [ {"name": "core",  "index": "core.json",  "data": "core.data"},       // 10 500 files, 145 MB: article/report/beamer, amsmath, fonts, hyphenation
-              {"name": "extra", "index": "extra.json", "data": "extra.data"} ] }   // 37 700 files, 466 MB: tikz, pgfplots, biblatex, siunitx, fonts-extra ...
+  "layers": [ {"name": "core",  "index": "core.json",  "data": "core.data"},       // 12 800 files, 221 MB: article/report/beamer, amsmath, fonts, hyphenation
+              {"name": "extra", "index": "extra.json", "data": "extra.data"} ] }   // 40 600 files, 563 MB: tikz, pgfplots, biblatex, siunitx, fonts-extra ...
 ```
 
 * **A layer is a TDS directory packed by `scripts/pack-layer.sh <dir> <name>`** (`NAME.data` + compact `NAME.json` index + `NAME.layer.json`).
@@ -74,9 +74,9 @@ All numbers are from the committed test suite (`tests/`), against native `pdftex
 |---|---|---|
 | `tests/trip.mjs` | Knuth's TRIP test on `tex.wasm`, same procedure and sed filter as TeX Live's `triptest.test` | pass |
 | `tests/etrip.mjs` | e-TRIP on `etex.wasm` and on `pdftex.wasm` (`ENGINE=pdftex`) | pass |
-| `tests/diff.mjs` | corpus of ≈ 500 documents (`gen-corpus.py`: TeX primitives, error paths, memory-limit overflows, every PNG variety, fonts, tikz, beamer, bibtex, ... plus `gen-corpus-real.py`: thesis, IEEE paper, beamer talk, KOMA report, CV, math notes, longtable) — PDF and every other output byte-identical, exit codes equal, logs equal modulo line wrapping/paths | see `build/diff-results.json` |
+| `tests/diff.mjs` | corpus of 513 documents (`gen-corpus.py`: TeX primitives, error paths, memory-limit overflows, every PNG variety, fonts, tikz, beamer, bibtex, ... plus `gen-corpus-real.py`: thesis, IEEE paper, beamer talk, KOMA report, CV, math notes, longtable) — PDF and every other output byte-identical, exit codes equal, logs equal modulo line wrapping/paths | see `build/diff-results.json` |
 | `tests/dist.mjs` | core-only distribution + plugging `extra` in; zip/tar.gz/flat/TDS/docstrip package install and removal; overlay shadowing; user fonts through the merged `pdftex.map` | pass |
-| `tests/packages.mjs` | `\usepackage{X}` for every `.sty` of the tree (5 141), wasm vs native pdftex | see `build/pkgcorpus-summary.json` |
+| `tests/packages.mjs` | `\usepackage{X}` for every `.sty` of the tree (5 141), wasm vs native pdftex | 5 141 packages: 3 192 load and compile identically to native, 1 921 fail identically (internal sub-files, classes, beamer theme parts, fontspec/unicode-math, missing deps), 28 differed before the `/dev/null` fix, of which 9 remain: embedded timestamps/tree paths in PDFs, a libpng version warning, one duplicate-file lookup order, two timeouts |
 | `tests/fuzz.mjs` | thousands of random edits (line insert/delete/swap, token mutation, `.bib`/`.sty`/`.bst` edits) over the corpus: incremental result vs. cold compile in a fresh instance | identical |
 | `tests/synctex.mjs` | forward/inverse SyncTeX over the corpus vs. native `synctex` data | 468/480 exact |
 | `tests/incremental.mjs`, `errors.mjs` | targeted incremental cases and error recovery | pass |
