@@ -47,9 +47,20 @@ export class HostFS {
     this.byBase = new Map();   // basename -> [entry]
     this.dirs = new Set(['', '.', 'texmf']);
   }
+  /** cheap copy that shares the (immutable) system files but has its own user files: one engine per project */
+  fork() {
+    const f = new HostFS();
+    for (const e of this.byId) if (!e.user) {
+      const c = { ...e, id: f.byId.length }; f.byId.push(c); f.byPath.set(c.path, c);
+      const base = c.path.slice(c.path.lastIndexOf('/') + 1);
+      let l = f.byBase.get(base); if (!l) f.byBase.set(base, l = []); l.push(c);
+    }
+    f.dirs = new Set(this.dirs);
+    return f;
+  }
   _add(path, data, user) {
     const old = this.byPath.get(path);
-    if (old) { old.data = data; old.gone = false; old.user = user; return old; }   // ids are stable per path
+    if (old) { old.data = data; old.gone = false; old.user = user; old.bin = undefined; return old; }   // ids are stable per path
     const e = { id: this.byId.length, path, data, user, gone: false };
     this.byId.push(e); this.byPath.set(path, e);
     const base = path.slice(path.lastIndexOf('/') + 1);
@@ -259,9 +270,12 @@ export class TexEngine {
     const e = this.fs.byId[id], d = e.data;
     if (off >= d.length) { if (e.user) this.trace.push({ k: 'read', id, off, len: 0 }); return 0; }
     let n = Math.min(len, d.length - off);
-    if (e.user) {                     // tight fence: hand out at most one line
-      const nl = d.indexOf(10, off);
-      if (nl >= 0 && nl - off + 1 < n) n = nl - off + 1;
+    if (e.user) {
+      if (e.bin === undefined) e.bin = d.subarray(0, 4096).includes(0);     // images etc: no line structure
+      if (!e.bin) {                   // text: tight fence, hand out at most one line
+        const nl = d.indexOf(10, off);
+        if (nl >= 0 && nl - off + 1 < n) n = nl - off + 1;
+      }
       this.trace.push({ k: 'read', id, off, len: n });
     }
     this.u8.set(d.subarray(off, off + n), dst);
@@ -369,7 +383,7 @@ export class TexEngine {
     this.incremental = incremental;
     const job = main.replace(/\.tex$/, '');
     const argv = ['pdflatex', '-interaction=nonstopmode', '-file-line-error', '-fmt=pdflatex',
-                  '-translate-file=cp227.tcx', ...extraArgs, main];
+                  ...extraArgs, main];
     // sync user files into the host FS (carried aux files stay)
     const seen = new Set();
     for (const [p, d] of Object.entries(files)) { this.fs.setUserFile(p, d); seen.add(p); }

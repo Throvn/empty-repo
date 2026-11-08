@@ -19,7 +19,7 @@
 
 kpathsea_instance kpse_def_inst;
 kpathsea kpse_def = &kpse_def_inst;
-const char *kpathsea_version_string = "kpathsea version 6.3.5 (mini, wasm)";
+const char *kpathsea_version_string = "kpathsea version 6.3.5";
 
 int vfs_exists(const char *);
 int vfs_is_dir(const char *);
@@ -144,7 +144,8 @@ static int has_suffix(const char *name, const char *sufs) {
 
 static string try_one(const char *name, const char *tag) {
   char out[1024];
-  if (vfs_exists(name) && !vfs_is_dir(name)) return xstrdup(name);   /* cwd/exact */
+  if (vfs_exists(name) && !vfs_is_dir(name))                           /* cwd (kpathsea says ./name) or exact path */
+    return name[0] == '/' || strchr(name, '/') ? xstrdup(name) : concat("./", name);
   if (strchr(name, '/')) return NULL;                                  /* paths are never searched */
   int id = host_search(name, tag, out, sizeof out);
   return id >= 0 ? xstrdup(out) : NULL;

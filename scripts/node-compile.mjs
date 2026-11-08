@@ -9,7 +9,7 @@ const name = path.basename(src);
 hfs.setUserFile(name, new Uint8Array(fs.readFileSync(src)));
 const eng = await newEngine(hfs);
 const t0 = performance.now();
-const code = eng.run(['pdflatex', '-interaction=nonstopmode', '-halt-on-error', '-fmt=pdflatex', '-translate-file=cp227.tcx', name]);
+const code = eng.run(['pdflatex', '-interaction=nonstopmode', '-halt-on-error', '-fmt=pdflatex', name]);
 const dt = performance.now() - t0;
 const job = name.replace(/\.tex$/, '');
 const pdf = eng.getFile(job + '.pdf');

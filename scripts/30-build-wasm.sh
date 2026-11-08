@@ -14,10 +14,12 @@ sed -e 's/^#define SIZEOF_LONG 8/#define SIZEOF_LONG 4/' \
 sed -e 's/^#define SIZEOF_LONG 8/#define SIZEOF_LONG 4/' "$GEN/kpathsea-c-auto.h" > "$WORK/wasm/inc/kpathsea/c-auto.h"
 cp "$GEN/kpathsea-paths.h" "$WORK/wasm/inc/kpathsea/paths.h"
 cp "$GEN/kpathsea-kpathsea.h" "$WORK/wasm/inc/kpathsea/kpathsea.h"
+# libpng config: the stock prebuilt config minus setjmp support (see src/shim/nosjlj.h, src/png_glue.c)
+grep -v -e 'PNG_SETJMP_SUPPORTED' -e 'PNG_SIMPLIFIED_' "$WORK/src/libpng/scripts/pnglibconf.h.prebuilt" > "$WORK/wasm/inc/pnglibconf.h"
 
 CF=($OPT -w -ffile-prefix-map="$WORK=/build" -ffile-prefix-map="$ROOT=/src" -DHAVE_CONFIG_H -DNO_DEBUG -D__SyncTeX__ '-DSYNCTEX_ENGINE_H="synctex-pdftex.h"' -DPDF_PARSER_ONLY
   -I"$ROOT/src" -I"$ROOT/src/shim" -I"$GEN" -I"$WORK/wasm/inc" -I"$SRC" -I"$KP"
-  -I"$SRC/libmd5" -I"$SRC/pdftexdir" -I"$SRC/synctexdir" -I"$WORK/src/zlib")
+  -I"$SRC/libmd5" -I"$SRC/pdftexdir" -I"$SRC/synctexdir" -I"$WORK/src/zlib" -I"$WORK/src/libpng")
 
 JOBS="$OBJ/jobs.txt"; : > "$JOBS"
 declare -a objs=()
@@ -36,6 +38,11 @@ for f in avl avlstuff epdf mapfile pkin subfont tounicode utils vfpacket writeen
          writeimg writejbig2 writejpg writet1 writet3 writettf writezip; do
   add pdftexdir_$f "$SRC/pdftexdir/$f.c"
 done
+add pdftexdir_writepng "$SRC/pdftexdir/writepng.c" -include "$ROOT/src/shim/nosjlj.h"
+# libpng (+ zlib above): PNG inclusion
+for f in png pngerror pngget pngmem pngread pngrio pngrtran pngrutil pngset pngtrans pngwio pngwrite pngwtran pngwutil; do
+  add libpng_$f "$WORK/src/libpng/$f.c" -UHAVE_CONFIG_H -DPNG_ARM_NEON_OPT=0 -DPNG_INTEL_SSE_OPT=0 -DPNG_MIPS_MSA_OPT=0 -DPNG_POWERPC_VSX_OPT=0 -DPNG_LOONGARCH_LSX_OPT=0
+done
 add synctex "$SRC/synctexdir/synctex.c"
 for f in basechsuffix chartostring coredump eofeoln fprintreal input2int inputint openclose \
          printversion setupvar uexit usage version zround; do
@@ -47,13 +54,13 @@ for f in adler32 crc32 deflate infback inffast inflate inftrees trees zutil comp
   add zlib_$f "$WORK/src/zlib/$f.c" -DHAVE_UNISTD_H -DZ_HAVE_STDARG_H=1
 done
 # our own replacements: kpathsea, vfs, stubs for xpdf/libpng, entry glue
-for f in vfs mini_kpse epdf_stub png_stub entry; do add $f "$ROOT/src/$f.c"; done
+for f in vfs mini_kpse epdf_stub png_glue entry; do add $f "$ROOT/src/$f.c"; done
 add snap "$ROOT/src/snap.c" -msimd128      # SIMD chunk diff for snapshots
 
 xargs -d '\n' -P "$(nproc)" -I{} bash -c '{}' < "$JOBS"
 
 WRAPS=""
-for s in fileno fopen fopen64 stat lstat stat64 lstat64 access remove unlink rename getcwd mkdir popen pclose system input_line; do
+for s in png_create_read_struct fileno fopen fopen64 stat lstat stat64 lstat64 access remove unlink rename getcwd mkdir popen pclose system input_line; do
   WRAPS="$WRAPS -Wl,--wrap=$s"
 done
 

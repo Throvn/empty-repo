@@ -1,0 +1,7 @@
+%!opts:
+\documentclass{article}
+\usepackage{graphicx}
+\begin{document}
+\pdfximage width 2cm {rgb8.png}\pdfrefximage\pdflastximage
+\pdfximage{rgba16.png}\pdfrefximage\the\pdflastximage\ \the\pdflastximagepages\ \the\pdflastximagecolordepth
+\end{document}

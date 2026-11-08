@@ -6,7 +6,8 @@ import path from 'node:path';
 import { WEB, loadSystemFS, newEngine } from './node-common.mjs';
 
 const hfs = loadSystemFS({ withFmt: false });
-const eng = await newEngine(hfs);
+// pinned date: the format (and the banner of every log) is reproducible
+const eng = await newEngine(hfs, { env: { SOURCE_DATE_EPOCH: '1700000000', FORCE_SOURCE_DATE: '1' } });
 const t0 = performance.now();
 const code = eng.run(['pdflatex', '-ini', '-interaction=nonstopmode', '-jobname=pdflatex',
   '-translate-file=cp227.tcx', '*pdflatex.ini']);
