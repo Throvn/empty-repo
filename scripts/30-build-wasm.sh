@@ -103,7 +103,7 @@ done
 
 emcc $OPT "${objs[@]}" -o "$OUT/$ENGINE.wasm" $WRAPS \
   --no-entry -sSTANDALONE_WASM=1 -sFILESYSTEM=0 \
-  -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456 -sMAXIMUM_MEMORY=2147483648 -sSTACK_SIZE=4194304 \
+  -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=536870912 -sMAXIMUM_MEMORY=2147483648 -sSTACK_SIZE=4194304 \
   -sEXPORTED_FUNCTIONS=_tex_run,_tex_args_ptr,_asyncify_data_ptr,_asyncify_data_reset,_sp_get,_sp_set,_heap_top,_snap_shadow_lo,_snap_shadow_hi,_snap_list_ptr,_snap_capacity,_snap_copy,_snap_diff,_vfs_count,_vfs_name,_vfs_data,_vfs_len,_vfs_find_index,_malloc,_free \
   $([ "$ENGINE" = bibtex ] && echo "-sSUPPORT_LONGJMP=wasm" || echo "-sASYNCIFY=1 -sASYNCIFY_IMPORTS=host_snapshot -sASYNCIFY_IGNORE_INDIRECT=1") \
   -sERROR_ON_UNDEFINED_SYMBOLS=1

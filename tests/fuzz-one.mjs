@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Worker for tests/fuzz.mjs: random edit sequence on one corpus case; after every edit the incremental result
-// must equal a from-scratch compile.   usage: fuzz-one.mjs <case> <seed> <edits>
+// Worker for tests/fuzz.mjs: random edit sequence on one corpus case; after every edit the incremental result must equal a
+// full (snapshot-free) compile that starts from the same on-disk state (carried aux/bbl files).   usage: fuzz-one.mjs <case> <seed> <edits>
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,10 +47,14 @@ try {
     const before = dec(cur[f]);
     const after = mutate(before);
     cur[f] = enc(after);
+    // files an earlier run wrote (aux, bbl ...) exist on a real disk too: the reference starts from the same state
+    const carried = eng.fs.userEntries().filter(e => e.carried).map(e => [e.path, e.data]);
     r = eng.compile(cur, { maxPasses: 5 });
     res.edits++;
     for (const p of r.passes) res[p.mode === 'resume' ? 'resumed' : p.mode === 'cached' ? 'cached' : 'cold']++;
-    const ref = (await wasmEngine()).compile(cur, { maxPasses: 5, incremental: false });
+    const refEng = await wasmEngine();
+    for (const [p, d] of carried) refEng.fs.setUserFile(p, d).carried = true;
+    const ref = refEng.compile(cur, { maxPasses: 5, incremental: false });
     // not converged within the pass budget => the fixpoint iteration may legitimately differ (stale aux); skip
     const refConv = ref.passes.length < 5 || ref.converged, myConv = r.converged;
     if (!(refConv && myConv)) { res.skipped = (res.skipped || 0) + 1; continue; }

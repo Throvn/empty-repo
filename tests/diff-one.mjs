@@ -32,6 +32,10 @@ try {
     else if (firstDiff(a, b) >= 0) fail(`file ${k} differs at ${firstDiff(a, b)}\n  native ${ctx(a, firstDiff(a, b))}\n  wasm   ${ctx(b, firstDiff(a, b))}`);
   }
   if (nat.exit !== was.exit) fail(`exit native=${nat.exit} wasm=${was.exit}`);
+  // tree gaps: files/fonts the document needed that the TeX tree lacks (an identical failure on both sides would hide them)
+  const gaps = new Set();
+  for (const m of (was.log || '').replace(/\n/g, '').matchAll(/File `([^']+)' not found|I can't find file `([^']+)'|Font ([^\s=]+)=?(\S*) at [\d.]+pt not loadable: Metric \(TFM\) file not found|Font (\S+) at \d+ not found/g)) gaps.add(m[1] || m[2] || m[4] || m[3] || m[5]);
+  res.gaps = [...gaps];
   const a = norm(nat.log), b = norm(was.log);
   if (!o.nolog && a !== b) { let i = 0; while (a[i] === b[i]) i++; fail(`log differs\n  native: ${JSON.stringify(a.slice(Math.max(0, i - 60), i + 80))}\n  wasm:   ${JSON.stringify(b.slice(Math.max(0, i - 60), i + 80))}`); }
 } catch (e) { res.status = 'ERR'; res.detail = String(e.stack || e).slice(0, 800); }

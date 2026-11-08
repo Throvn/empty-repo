@@ -545,4 +545,5 @@ project('proj-read-data', r'\documentclass{article}\begin{document}\openin1=data
 project('proj-csv-readline', r'\documentclass{article}\begin{document}\openin1=d.csv \readline1 to \a \show\a \readline1 to \b \message{\detokenize\expandafter{\b}}\end{document}', {'d.csv': 'a,b,c\n1,2,3\n'})
 project('proj-write-then-input', r'\documentclass{article}\begin{document}\immediate\openout1=gen.tex \immediate\write1{Generated \string\textbf{text}}\immediate\closeout1 \input{gen}\input{gen.tex}\end{document}', {})
 
+exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'gen-corpus-real.py')).read())   # realistic composite documents
 print(f'{n} corpus documents written to {OUT}')

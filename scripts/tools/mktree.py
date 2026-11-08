@@ -14,7 +14,7 @@ DEBS, OUT = sys.argv[1], sys.argv[2]
 
 PKGS = ['texlive-base', 'texlive-latex-base', 'texlive-latex-recommended', 'texlive-latex-extra', 'texlive-pictures',
         'texlive-science', 'texlive-publishers', 'texlive-plain-generic', 'texlive-bibtex-extra', 'texlive-formats-extra',
-        'texlive-fonts-recommended', 'lmodern', 'cm-super',
+        'texlive-fonts-recommended', 'lmodern', 'cm-super', 'cm-super-minimal',
         'texlive-lang-german', 'texlive-lang-french', 'texlive-lang-spanish', 'texlive-lang-italian', 'texlive-lang-portuguese',
         'texlive-lang-european', 'texlive-lang-polish', 'texlive-lang-cyrillic', 'texlive-lang-czechslovak',
         'texlive-fonts-extra']
@@ -26,9 +26,10 @@ DROP_TEX = {'latex-dev', 'luatex', 'lualatex', 'xelatex', 'xetex', 'context', 'j
 FONT_ALLOW = {'kpfonts', 'newtx', 'newpx', 'txfontsb', 'libertine', 'libertinus-type1', 'xcharter', 'fourier', 'mathdesign',
               'concmath', 'eulervm', 'cmbright', 'inconsolata', 'mnsymbol', 'stix', 'stix2-type1', 'antt', 'arev', 'bera',
               'ebgaramond', 'cochineal', 'garamond-libre', 'gentium-tug', 'fbb', 'erewhon', 'nimbus15', 'dejavu', 'mlmodern',
-              'sansmathfonts', 'cm-lgc', 'ccicons', 'fontawesome', 'fontawesome5', 'bbold-type1', 'bboldx',
+              'sansmathfonts', 'sansmathaccent', 'cm-lgc', 'ccicons', 'fontawesome', 'fontawesome5', 'bbold-type1', 'bboldx',
               'dsserif', 'esint', 'cmll', 'cmexb', 'doublestroke', 'dutchcal', 'boondox', 'cmathbb', 'iwona', 'kurier', 'ptsans', 'ptserif', 'pxfonts', 'txfonts', 'utopia', 'charter', 'tex-gyre', 'urw35vf', 'courierten', 'frcursive', 'calligra-type1',
-              'esstix', 'fdsymbol', 'esvect', 'yfonts-t1', 'zlmtt', 'lm', 'ly1', 'tipa', 'wsuipa', 'phaistos'}
+              'esstix', 'fdsymbol', 'esvect', 'yfonts-t1', 'zlmtt', 'lm', 'ly1', 'tipa', 'wsuipa', 'phaistos',
+              'bbold', 'concmath-fonts', 'concrete', 'bbm', 'bbm-macros'}
 FONT_KINDS = ('tfm', 'vf', 'type1', 'enc', 'map')
 
 n_files = n_conflict = 0
@@ -48,7 +49,7 @@ def want(rel, pkg):
             # fonts/<kind>/<supplier>/<family>/...   (map files: fonts/map/<driver>/<family>/...)
             fam = p[3] if p[1] != 'map' else (p[3] if len(p) > 4 else '')
             return fam in FONT_ALLOW or p[2] in FONT_ALLOW
-        return not (p[1] == 'type1' and p[2] in ('hoekwater', 'bitstrea')) and not (p[1] in ('tfm', 'vf') and p[2] == 'bitstrea')
+        return not (p[1] == 'type1' and p[2] == 'hoekwater')
     return False
 
 for pkg in PKGS:

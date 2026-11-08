@@ -146,6 +146,7 @@ export class HostFS {
 // against a shadow image of the previous snapshot, kept in a reserved region of its own memory);
 // a plain JS scan is the fallback when the image does not fit the shadow.
 const CH = 1024;                      // chunk size in 32-bit words (= 4 KiB)
+const ZERO = new Uint32Array(CH);     // shared all-zero chunk
 
 class Snapper {
   constructor(x, mem) {
@@ -175,9 +176,15 @@ class Snapper {
       if (n > pl) this.x.snap_copy(pl, n);
       return { table, fresh };
     }
-    if (this.useShadow) {                                                    // first capture: seed the shadow
-      for (let c = 0; c < n; c++) if (!this._skip(c)) { table[c] = slice(c); fresh++; }
-      this.x.snap_copy(0, n); this.inSync = true;
+    if (this.useShadow) {
+      // first capture: the shadow is still all zero, so the SIMD diff lists exactly the non-zero chunks (and seeds the shadow);
+      // everything else shares one immutable zero chunk: a big, mostly untouched heap costs nothing
+      table.fill(ZERO);
+      for (let c = 0; c < n; c++) if (this._skip(c)) table[c] = null;
+      const k = this.x.snap_diff(n);
+      const list = new Uint32Array(this.mem.buffer, this.x.snap_list_ptr(), k);
+      for (let i = 0; i < k; i++) { const c = list[i]; table[c] = slice(c); fresh++; }
+      this.inSync = true;
       return { table, fresh };
     }
     for (let c = 0; c < n; c++) {                                            // pure JS fallback
@@ -453,13 +460,23 @@ export class TexEngine {
                   ...(synctex ? ['-synctex=-1'] : []), ...extraArgs, main];
     // sync user files into the host FS (carried aux files stay)
     const seen = new Set();
-    for (const [p, d] of Object.entries(files)) { this.fs.setUserFile(p, d); seen.add(p); }
+    for (const [p, d] of Object.entries(files)) {
+      seen.add(p);
+      const data = typeof d === 'string' ? enc.encode(d) : d, old = this.fs.byPath.get(p);
+      // the editor re-sends every file on every compile: only a changed *user* version replaces what is on the "disk"
+      // (which may be newer, e.g. a .bbl bibtex regenerated)
+      if (old && old.user && !old.gone && old.provided && bytesEqual(old.provided, data)) continue;
+      const e = this.fs.setUserFile(p, data); e.provided = e.data; e.carried = false;
+    }
     for (const e of this.fs.userEntries()) if (!seen.has(e.path) && !e.carried) this.fs.removeUserFile(e.path);
     if (this.lastArgs && this.lastArgs.join('\0') !== argv.join('\0')) { this.lastFiles = null; }   // different command: start over
     this.lastArgs = argv;
 
     const passes = []; let converged = true;
     for (let pass = 0; pass < maxPasses; pass++) {
+      // BibTeX's inputs (.bib/.bst, or citations changed by the last pass) may have changed without any LaTeX read noticing,
+      // e.g. an edited .bib: refresh the .bbl first, then the planner sees *that* as the change and rolls back to before it is read
+      this._runBibtex(job);
       const plan = this._plan();
       const p0 = now();
       if (plan.mode === 'cached') { passes.push({ mode: 'cached', ms: now() - p0 }); break; }

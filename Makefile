@@ -24,7 +24,7 @@ $(STAMP)/wasm: $(STAMP)/toolchain $(STAMP)/native scripts/30-build-wasm.sh $(wil
 	scripts/30-build-wasm.sh && ENGINE=bibtex scripts/30-build-wasm.sh && touch $@
 
 texlive: $(STAMP)/texlive                     # build/web/texlive.data (+ texlive.json)
-$(STAMP)/texlive: $(STAMP)/toolchain scripts/40-texlive-files.sh scripts/tools/mkmap.py | $(STAMP)
+$(STAMP)/texlive: $(STAMP)/toolchain scripts/40-texlive-files.sh scripts/tools/mktree.py scripts/tools/mkindex.py | $(STAMP)
 	scripts/40-texlive-files.sh && touch $@
 
 fmt: $(STAMP)/fmt                             # build/web/pdflatex.fmt, dumped by the wasm engine itself

@@ -114,10 +114,10 @@ string kpse_readable_file(string f) { return (vfs_exists(f) && !vfs_is_dir(f)) ?
 
 /* --------------------------------------------------------------- variables */
 static const struct { const char *name, *value; } params[] = {
-  /* mirrors texmf.cnf, trimmed so that a snapshot of linear memory stays small */
-  {"main_memory", "2000000"}, {"extra_mem_top", "0"}, {"extra_mem_bot", "0"},
-  {"font_mem_size", "800000"}, {"font_max", "2000"}, {"hash_extra", "100000"},
-  {"pool_size", "3200000"}, {"string_vacancies", "90000"}, {"max_strings", "200000"},
+  /* TeX Live's texmf.cnf defaults (font_mem_size trimmed): snapshots only pay for memory a run actually touched */
+  {"main_memory", "5000000"}, {"extra_mem_top", "0"}, {"extra_mem_bot", "0"},
+  {"font_mem_size", "3000000"}, {"font_max", "2000"}, {"hash_extra", "600000"},
+  {"pool_size", "6250000"}, {"string_vacancies", "90000"}, {"max_strings", "500000"},
   {"pool_free", "47500"}, {"strings_free", "100"}, {"buf_size", "200000"},
   {"trie_size", "1000000"}, {"hyph_size", "8191"}, {"nest_size", "500"},
   {"max_in_open", "15"}, {"param_size", "10000"}, {"save_size", "100000"},

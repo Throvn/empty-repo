@@ -40,5 +40,10 @@ async function worker() {
 }
 await Promise.all(Array.from({ length: jobs }, worker));
 console.log(`\n${fail ? fail + ' FAILED of ' : 'all '}${cases.length} cases${fail ? '' : ' identical to native pdftex'}`);
+const gaps = new Map();
+for (const r of results) for (const g of r.gaps || []) { if (!gaps.has(g)) gaps.set(g, []); gaps.get(g).push(r.name.replace(/\.tex$/, '')); }
+const expectedGap = /missing|nonexist|doesnotexist|notpng|xyz|bad|cyr|greek|klingon|nosuch/i;
+const real = [...gaps].filter(([g, docs]) => !docs.every(d => expectedGap.test(d) || expectedGap.test(g)));
+if (real.length) { console.log('\nTeX-tree gaps (needed by a document but not in the pack):'); for (const [g, docs] of real) console.log('  ', g.padEnd(28), docs.slice(0, 4).join(', ') + (docs.length > 4 ? ` (+${docs.length - 4})` : '')); }
 fs.writeFileSync(path.join(here, '..', 'build', 'diff-results.json'), JSON.stringify(results, null, 1));
 process.exit(fail ? 1 : 0);

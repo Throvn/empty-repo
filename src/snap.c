@@ -17,7 +17,7 @@
 
 #define EXPORT __attribute__((used, visibility("default")))
 #define CHUNK 4096u
-#define SHADOW_BYTES (96u << 20)         /* address space reserved (untouched pages cost nothing) */
+#define SHADOW_BYTES (192u << 20)         /* address space reserved (untouched pages cost nothing) */
 #define MAX_CHUNKS 65536u
 
 static unsigned char shadow[SHADOW_BYTES] __attribute__((aligned(4096)));
