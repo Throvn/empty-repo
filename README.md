@@ -21,7 +21,7 @@ web2c build) and outbound HTTPS to `archive.ubuntu.com`, `conda.anaconda.org` an
 
 ## What it supports
 
-* **pdfTeX/LaTeX** with the format `pdflatex.fmt`, any package of the (Ubuntu-packaged) TeX Live 2023 tree: ≈ 48 000 files, 640 MB, *lazily*
+* **pdfTeX/LaTeX** with the format `pdflatex.fmt`, any package of the (Ubuntu-packaged) TeX Live 2023 tree: ≈ 48 000 files, 610 MB in two layers, *lazily*
   fetched with HTTP Range requests (sync XHR inside the worker) — a page load transfers only the ≈ 8 MB "hot set"
   (`hot.data`: what a typical article/beamer/thesis touches) and the format; everything else is pulled on first use and cached.
 * **PNG** (all colour types and bit depths, interlaced, tRNS, gAMA/pHYs, 16-bit, truncated/broken files → same errors as native),
@@ -31,7 +31,40 @@ web2c build) and outbound HTTPS to `archive.ubuntu.com`, `conda.anaconda.org` an
   the aux/bbl/toc files stop changing; natbib, biblatex-with-bibtex, IEEEtran, plainnat).
 * **SyncTeX**: click in the PDF → source line; Ctrl+J (or the button) → highlight in the PDF.
 * **Problems panel** with jump-to-line; Stop button for runaway documents; project persistence in `localStorage`.
-* **No** shell escape / `minted`, no `makeindex`/`biber`, no XeTeX/LuaTeX (different engines), no Metafont fallback (missing fonts are reported).
+* **No** shell escape / `minted`, no `biber`, no XeTeX/LuaTeX (different engines), no Metafont fallback (missing fonts are reported).
+
+## A pluggable TeX distribution
+
+The TeX tree is not baked into the engine: it is a set of **layers** described by `dist.json`, mounted at start-up (and at any later time)
+into the engine's virtual file system.
+
+```jsonc
+// build/web/dist.json                        (written by scripts/40 / 70; a single layer's NAME.layer.json has the same shape)
+{ "name": "texlive-2023 (Ubuntu 24.04 packages)", "format": "pdflatex.fmt",
+  "layers": [ {"name": "core",  "index": "core.json",  "data": "core.data"},       // 10 500 files, 145 MB: article/report/beamer, amsmath, fonts, hyphenation
+              {"name": "extra", "index": "extra.json", "data": "extra.data"} ] }   // 37 700 files, 466 MB: tikz, pgfplots, biblatex, siunitx, fonts-extra ...
+```
+
+* **A layer is a TDS directory packed by `scripts/pack-layer.sh <dir> <name>`** (`NAME.data` + compact `NAME.json` index + `NAME.layer.json`).
+  The data blob is read with HTTP Range requests, file by file, on first use — never downloaded as a whole.
+* **Choose what to deploy:** `DIST_LAYERS=core make web` ships a minimal distribution (the format only needs `core`; `\usepackage{tikz}` then says
+  `File 'tikz.sty' not found`, exactly like a small TeX installation). Layers can be hosted anywhere that supports CORS + Range.
+* **Plug in more at run time:** `index.html?layer=https://host/x.layer.json` (or *Packages → Add layer URL*) mounts a layer in front of the distribution;
+  `?dist=https://host/dist.json` replaces the whole distribution. Later layers shadow earlier ones (same path *or* same name in the same search tier —
+  adding a directory in front of `TEXMF`); removing a layer brings the shadowed files back. Any change restarts the engine cold (snapshots would be stale).
+* **Install packages in the browser** (*Packages* button, persisted in IndexedDB, replayed on reload; API: `web/dist.js` `installPackage`):
+  * CTAN/TDS archives (`.zip`, `.tar.gz`; `tex/…`, `fonts/…`, `bibtex/…`, also below a wrapper directory or `texmf/`);
+  * flat package archives or loose files — `.sty .cls .def .cfg .fd .bbx …` go to `tex/latex/<name>/`, `.bst`, `.bib`, fonts (`.tfm .vf .pfb .enc`) by type;
+  * sources: an `.ins` whose generated files are missing is run through **docstrip inside the engine** (`latex x.ins` on a throw-away instance);
+  * fonts: `.map` files of installed packages are merged into the generated `pdftex.map` (entries of installed layers win by TFM name).
+* **Everything else TeX Live has to offer is one `scripts/pack-layer.sh` away:** unpack any package into a TDS tree, pack it, add it to `dist.json`.
+* Index programs are wasm too: `makeindex.wasm` (plain C from TeX Live, 90 KB) runs between passes like BibTeX does — `\makeindex`/`\printindex`
+  (makeidx, imakeidx incl. several indexes), glossaries (`main.glo`→`main.gls` with `main.ist`) and nomencl (`.nlo`→`.nls`) — diff-tested against native `makeindex`.
+
+What cannot work in a browser tab (no processes, no shell): `\write18`/`-shell-escape` packages such as `minted`, `pythontex`, `gnuplottex`, `sagetex`,
+`svg` (Inkscape), `epstopdf` on `.eps` (Ghostscript), `pdfpages` on non-PDF input, `biber` (Perl) — they fail with the package's own
+"shell escape" message, as `pdflatex` without `-shell-escape` would — and engines other than pdfTeX (`fontspec`, `unicode-math`, `luacode` need XeTeX/LuaTeX).
+`tests/packages.mjs` measures the rest: it loads **every `.sty` of the tree** with native pdftex and with the wasm build and prints how many work and why the others do not.
 
 ## Verification
 
@@ -42,6 +75,8 @@ All numbers are from the committed test suite (`tests/`), against native `pdftex
 | `tests/trip.mjs` | Knuth's TRIP test on `tex.wasm`, same procedure and sed filter as TeX Live's `triptest.test` | pass |
 | `tests/etrip.mjs` | e-TRIP on `etex.wasm` and on `pdftex.wasm` (`ENGINE=pdftex`) | pass |
 | `tests/diff.mjs` | corpus of ≈ 500 documents (`gen-corpus.py`: TeX primitives, error paths, memory-limit overflows, every PNG variety, fonts, tikz, beamer, bibtex, ... plus `gen-corpus-real.py`: thesis, IEEE paper, beamer talk, KOMA report, CV, math notes, longtable) — PDF and every other output byte-identical, exit codes equal, logs equal modulo line wrapping/paths | see `build/diff-results.json` |
+| `tests/dist.mjs` | core-only distribution + plugging `extra` in; zip/tar.gz/flat/TDS/docstrip package install and removal; overlay shadowing; user fonts through the merged `pdftex.map` | pass |
+| `tests/packages.mjs` | `\usepackage{X}` for every `.sty` of the tree (5 141), wasm vs native pdftex | see `build/pkgcorpus-summary.json` |
 | `tests/fuzz.mjs` | thousands of random edits (line insert/delete/swap, token mutation, `.bib`/`.sty`/`.bst` edits) over the corpus: incremental result vs. cold compile in a fresh instance | identical |
 | `tests/synctex.mjs` | forward/inverse SyncTeX over the corpus vs. native `synctex` data | 468/480 exact |
 | `tests/incremental.mjs`, `errors.mjs` | targeted incremental cases and error recovery | pass |
@@ -77,9 +112,10 @@ unchanged `.bbl` clobbering the regenerated one, memory parameters (now TeX Live
 | `scripts/60-build-fmt.mjs` | runs `pdftex.wasm` itself in `-ini` mode to dump `pdflatex.fmt` |
 | `scripts/65-native-ref.sh` | native format for the differential tests |
 | `scripts/66-hotset.mjs` | records the files typical documents touch → `hot.data` |
-| `scripts/70-package-web.sh` | assembles the static site (+ pdf.js, `.gz` copies) |
+| `scripts/pack-layer.sh` | packs any TDS directory into a distribution layer |
+| `scripts/70-package-web.sh` | assembles the static site (+ pdf.js, `dist.json`, `.gz` copies) |
 | `src/` | the C that replaces libraries and glues the engine to the host |
-| `web/` | `engine.js` (host + incremental logic), `worker.js`, `index.html`, `project.js`, `problems.js`, `viewer.js`, `synctex.js` |
+| `web/` | `engine.js` (host + incremental logic), `dist.js` (layers, archives, docstrip, maps), `worker.js`, `index.html`, `project.js`, `problems.js`, `viewer.js`, `synctex.js` |
 | `tests/` | see Verification; `lib/harness.mjs` shared helpers, `images/` PNG fixtures, `corpus/` hand-written cases |
 
 Everything lands in `build/`; the only inputs are the pinned URLs/checksums in `scripts/`.
@@ -140,7 +176,7 @@ The fuzzer (`tests/fuzz.mjs`) and `tests/incremental.mjs` assert that after ever
 
 ## Limitations / future work
 
-* No `makeindex`, `biber`, shell escape, XeTeX/LuaTeX; only the bundled TeX Live packages. Fonts missing from the tree are reported, not generated.
+* No `biber`, shell escape, XeTeX/LuaTeX; only the bundled TeX Live packages. Fonts missing from the tree are reported, not generated.
 * Snapshot spacing is time-based on user-file line reads; an `\input`-heavy preamble before the first user line is not skippable.
 * Edits that change `.aux` content re-typeset from `\begin{document}`.
 * A runaway document cannot be interrupted from inside the worker: the UI offers *Stop* (terminates and restarts the worker).
