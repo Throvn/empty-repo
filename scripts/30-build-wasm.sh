@@ -15,7 +15,7 @@ sed -e 's/^#define SIZEOF_LONG 8/#define SIZEOF_LONG 4/' "$GEN/kpathsea-c-auto.h
 cp "$GEN/kpathsea-paths.h" "$WORK/wasm/inc/kpathsea/paths.h"
 cp "$GEN/kpathsea-kpathsea.h" "$WORK/wasm/inc/kpathsea/kpathsea.h"
 
-CF=($OPT -w -DHAVE_CONFIG_H -DNO_DEBUG -D__SyncTeX__ '-DSYNCTEX_ENGINE_H="synctex-pdftex.h"' -DPDF_PARSER_ONLY
+CF=($OPT -w -ffile-prefix-map="$WORK=/build" -ffile-prefix-map="$ROOT=/src" -DHAVE_CONFIG_H -DNO_DEBUG -D__SyncTeX__ '-DSYNCTEX_ENGINE_H="synctex-pdftex.h"' -DPDF_PARSER_ONLY
   -I"$ROOT/src" -I"$ROOT/src/shim" -I"$GEN" -I"$WORK/wasm/inc" -I"$SRC" -I"$KP"
   -I"$SRC/libmd5" -I"$SRC/pdftexdir" -I"$SRC/synctexdir" -I"$WORK/src/zlib")
 

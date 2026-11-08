@@ -48,7 +48,9 @@ A full from-scratch build takes ≈ 6 minutes (3½ of them the native TeX Live c
 | `web/` | `engine.js` (host + incremental logic), `worker.js`, `index.html`, `viewer.js` |
 | `tests/` | `incremental.mjs`, `errors.mjs`, `bench.mjs`, sample documents |
 
-Everything lands in `build/`; the only inputs are the pinned URLs/checksums in `scripts/`.
+Everything lands in `build/`; the only inputs are the pinned URLs/checksums in `scripts/`. A from-scratch `make` in a fresh clone
+was verified to work (5½ min), to produce a byte-identical `texlive.data`, and (with `-ffile-prefix-map`) a byte-identical `pdftex.wasm`
+in two different checkout directories.
 
 ## How the port works
 
