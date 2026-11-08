@@ -21,6 +21,7 @@ cp "$W"/texini.c "$W"/tex0.c "$W"/tex-pool.c "$W"/texd.h "$W"/texcoerce.h "$GEN/
 cp "$W"/etexini.c "$W"/etex0.c "$W"/etex-pool.c "$W"/etexd.h "$W"/etexcoerce.h "$GEN/"
 cp "$W"/bibtex.c "$W"/bibtex.h "$GEN/"
 cp "$W"/tex "$W"/etex "$W"/bibtex "$W"/dvitype "$W"/pltotf "$W"/tftopl "$WORK/native-tools/"
+make -C texk/makeindexk -j"$(nproc)" >makeindex.log 2>&1 && cp texk/makeindexk/makeindex "$WORK/native-tools/"      # reference for the index tests
 cp "$W"/pdftexini.c "$W"/pdftex0.c "$W"/pdftex-pool.c "$W"/pdftexd.h "$W"/pdftexcoerce.h "$GEN/"
 cp "$W"/w2c/c-auto.h "$GEN/web2c-c-auto.h"
 cp "$N"/texk/kpathsea/c-auto.h "$GEN/kpathsea-c-auto.h"

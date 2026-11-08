@@ -19,6 +19,12 @@ PKGS = ['texlive-base', 'texlive-latex-base', 'texlive-latex-recommended', 'texl
         'texlive-lang-european', 'texlive-lang-polish', 'texlive-lang-cyrillic', 'texlive-lang-czechslovak',
         'texlive-fonts-extra']
 ROOTS = ['usr/share/texlive/texmf-dist', 'usr/share/texmf']
+# Distribution layers: what the format and a typical article/report/beamer document need ("core") and everything else ("extra").
+# The runtime loads layers independently (web/dist.js, dist.json), so a deployment may ship `core` only or add its own layers.
+def layer_of(pkg):
+    return 'extra' if pkg in ('texlive-latex-extra', 'texlive-pictures', 'texlive-science', 'texlive-publishers', 'texlive-plain-generic',
+                              'texlive-bibtex-extra', 'texlive-formats-extra', 'texlive-fonts-extra') else 'core'
+layers = {}        # tree path (relative to OUT) -> layer
 
 # engines/formats pdfTeX does not run: their macro trees are useless here
 DROP_TEX = {'latex-dev', 'luatex', 'lualatex', 'xelatex', 'xetex', 'context', 'jadetex', 'xmltex', 'mltex', 'texsis', 'lollipop', 'eplain-x'}
@@ -40,6 +46,8 @@ def want(rel, pkg):
         return len(p) > 2 and p[1] not in DROP_TEX
     if p[0] == 'bibtex':
         return len(p) > 2 and p[1] == 'bst'
+    if p[0] == 'makeindex':
+        return rel.endswith('.ist')
     if p[0] == 'web2c':
         return rel.endswith('.tcx')
     if p[0] == 'fonts':
@@ -72,7 +80,7 @@ for pkg in PKGS:
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 if os.path.exists(dst):
                     n_conflict += 1
-                shutil.copyfile(src, dst); n_files += 1
+                shutil.copyfile(src, dst); n_files += 1; layers[rel] = layer_of(pkg)
 print(f'tree: {n_files} files ({n_conflict} overwritten by later packages)', file=sys.stderr)
 
 # ------------------------------------------------------------------ pdftex.map
@@ -183,3 +191,11 @@ os.makedirs(os.path.join(OUT, 'tex/generic/config'), exist_ok=True)
 open(os.path.join(OUT, 'tex/generic/config/language.dat'), 'w').write('\n'.join(dat) + '\n')
 open(os.path.join(OUT, 'tex/generic/config/language.def'), 'w').write('\n'.join(defs) + '\n')
 print(f'languages: {len(dat)} lines in language.dat', file=sys.stderr)
+
+import json
+# generated files belong to core (pdftex.map lists the fonts of *all* layers; entries of absent fonts are harmless until used)
+for dp, _, fns in os.walk(OUT):
+    for fn in fns:
+        rel = os.path.relpath(os.path.join(dp, fn), OUT).replace(os.sep, '/')
+        layers.setdefault(rel, 'core')
+json.dump(layers, open(OUT.rstrip('/') + '.layers.json', 'w'), separators=(',', ':'))

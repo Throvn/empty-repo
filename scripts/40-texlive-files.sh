@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Assemble the TeX Live *runtime* tree for pdfTeX (macros, TFMs, Type 1 fonts, hyphenation, .bst styles ...) from pinned
-# Ubuntu packages and pack it with emscripten's file_packager into texlive.data (+ texlive.json index).
+# Ubuntu packages and split it into layers (core, extra) and pack each with scripts/pack-layer.sh.
 # The data blob is NOT downloaded as a whole by the browser: files are fetched on demand with HTTP range requests.
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
@@ -34,9 +34,9 @@ rm -rf "$TREE"; mkdir -p "$TREE"
 python3 "$ROOT/scripts/tools/mktree.py" "$XD" "$TREE"
 du -sh "$TREE"; find "$TREE" -type f | wc -l
 
-# ---- pack with emscripten's file_packager (data blob + json index; no JS loader needed) ----
-python3 "$EMENV/lib/emscripten-4.0.9/tools/file_packager.py" "$OUT/texlive.data" \
-  --preload "$TREE@/texmf" --separate-metadata --js-output="$OUT/texlive.pack.js" --no-node >/dev/null
-python3 "$ROOT/scripts/tools/mkindex.py" "$OUT/texlive.pack.js.metadata" "$OUT/texlive.json"
-rm -f "$OUT/texlive.pack.js" "$OUT/texlive.pack.js.metadata"      # only the data blob + compact index are used
-ls -la "$OUT/texlive.data" "$OUT/texlive.json"
+# ---- one directory per layer, each packed by pack-layer.sh (data blob + compact index; the browser range-reads the blob) ----
+LAYERS=$(python3 "$ROOT/scripts/tools/splitlayers.py" "$TREE" "$TREE.layers.json" "$WORK/layers")
+rm -f "$OUT"/texlive.data "$OUT"/texlive.json
+for l in $LAYERS; do "$ROOT/scripts/pack-layer.sh" "$WORK/layers/$l" "$l" "$OUT"; done
+echo "$LAYERS" > "$WORK/layers.list"
+python3 "$ROOT/scripts/tools/mkdist.py" "$OUT" $LAYERS      # full manifest (70-package-web.sh rewrites it for DIST_LAYERS=...)

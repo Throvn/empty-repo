@@ -21,7 +21,7 @@ $(STAMP)/native: $(STAMP)/sources scripts/20-native-gen.sh
 
 wasm: $(STAMP)/wasm                           # build/web/pdftex.wasm
 $(STAMP)/wasm: $(STAMP)/toolchain $(STAMP)/native scripts/30-build-wasm.sh $(wildcard src/*.c src/*.h src/shim/*.h)
-	scripts/30-build-wasm.sh && ENGINE=bibtex scripts/30-build-wasm.sh && touch $@
+	scripts/30-build-wasm.sh && ENGINE=bibtex scripts/30-build-wasm.sh && ENGINE=makeindex scripts/30-build-wasm.sh && touch $@
 
 texlive: $(STAMP)/texlive                     # build/web/texlive.data (+ texlive.json)
 $(STAMP)/texlive: $(STAMP)/toolchain scripts/40-texlive-files.sh scripts/tools/mktree.py scripts/tools/mkindex.py | $(STAMP)

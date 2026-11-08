@@ -27,7 +27,9 @@ try {
   else if (nat.pdf) { const d = firstDiff(nat.pdf, was.pdf); if (d >= 0) fail(`pdf differs at byte ${d} (native ${nat.pdf.length}, wasm ${was.pdf.length})\n  native ${ctx(nat.pdf, d)}\n  wasm   ${ctx(was.pdf, d)}`); }
   for (const k of new Set([...Object.keys(nat.outputs), ...Object.keys(was.outputs)])) {
     if (k.endsWith('.log') || k.endsWith('.pdf')) continue;
-    const a = nat.outputs[k], b = was.outputs[k];
+    let a = nat.outputs[k], b = was.outputs[k];
+    if (/\.(ilg|glg|nlg)$/.test(k) && a && b) { const strip = x => new TextEncoder().encode(Buffer.from(x).toString('latin1').split(path.join(here, '..', 'build') + '/').join('')); a = strip(a); b = strip(b); }       // makeindex logs print the style file's path
+    if (/\.(ilg|glg|nlg)$/.test(k) && !(a && b)) continue;          // only the last makeindex run's log survives on the wasm side
     if (!a || !b) fail(`file ${k}: native=${!!a} wasm=${!!b}`);
     else if (firstDiff(a, b) >= 0) fail(`file ${k} differs at ${firstDiff(a, b)}\n  native ${ctx(a, firstDiff(a, b))}\n  wasm   ${ctx(b, firstDiff(a, b))}`);
   }
@@ -36,6 +38,7 @@ try {
   const gaps = new Set();
   for (const m of (was.log || '').replace(/\n/g, '').matchAll(/File `([^']+)' not found|I can't find file `([^']+)'|Font ([^\s=]+)=?(\S*) at [\d.]+pt not loadable: Metric \(TFM\) file not found|Font (\S+) at \d+ not found/g)) gaps.add(m[1] || m[2] || m[4] || m[3] || m[5]);
   res.gaps = [...gaps];
+  res.err = (was.log || '').split('\n').find(l => /^!|^\S+:\d+: /.test(l)) || '';
   const a = norm(nat.log), b = norm(was.log);
   if (!o.nolog && a !== b) { let i = 0; while (a[i] === b[i]) i++; fail(`log differs\n  native: ${JSON.stringify(a.slice(Math.max(0, i - 60), i + 80))}\n  wasm:   ${JSON.stringify(b.slice(Math.max(0, i - 60), i + 80))}`); }
 } catch (e) { res.status = 'ERR'; res.detail = String(e.stack || e).slice(0, 800); }

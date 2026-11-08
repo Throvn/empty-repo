@@ -57,6 +57,11 @@
   #problems .p .k { width: 4.5rem; flex: none; } #problems .p .loc { width: 9rem; flex: none; color: var(--muted); }
   #drop { position: fixed; inset: 0; background: rgba(179,38,30,.15); border: 3px dashed var(--accent); display: none; align-items: center; justify-content: center; font-size: 1.4rem; pointer-events: none; }
   body.dragging #drop { display: flex; }
+  dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); max-width: min(46rem, 94vw); }
+  dialog::backdrop { background: rgba(0,0,0,.4); } dialog h2, dialog h3 { margin: .2rem 0 .5rem; } .muted { color: var(--muted); }
+  #pklayers { border-collapse: collapse; width: 100%; } #pklayers td { padding: .25rem .5rem; border-bottom: 1px solid var(--line); }
+  #pkdlg .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: .5rem 0; } #pkdlg input[type=text], #pkurl { flex: 1; min-width: 12rem; font: inherit; padding: .3rem; }
+  #pkmsg { white-space: pre-wrap; font: 12px/1.4 ui-monospace, monospace; max-height: 8rem; overflow: auto; }
 </style>
 </head>
 <body>
@@ -67,6 +72,7 @@
   <label><input type="checkbox" id="incr" checked> incremental</label>
   <label title="scroll the PDF to the line under the cursor (Ctrl+J does it once); click the PDF to jump to the source"><input type="checkbox" id="follow" checked> sync</label>
   <label>main <select id="mainsel"></select></label>
+  <button id="pk" title="TeX distribution: layers, installed packages; add .zip/.tar.gz/.sty/.cls/.bst/fonts">Packages</button>
   <button id="long" title="a 60-section document: watch incremental compilation skip the unchanged prefix">Long sample</button>
   <a id="dl" download="main.pdf" hidden><button>Download PDF</button></a>
   <button id="stop" hidden title="TeX seems stuck (infinite loop?): kill the worker and restart the engine">Stop</button>
@@ -88,10 +94,22 @@
     <div id="panes"><div id="problems" class="on"></div><pre id="log"></pre><pre id="console"></pre></div>
   </section>
 </main>
+<dialog id="pkdlg">
+  <h2>TeX distribution</h2>
+  <p id="pkdist" class="muted"></p>
+  <table id="pklayers"></table>
+  <h3>Add a package</h3>
+  <p class="muted">A CTAN archive (<code>.zip</code>, <code>.tar.gz</code>: TDS layout, flat, or <code>.ins</code>/<code>.dtx</code> sources that are run through docstrip),
+     or loose files (<code>.sty .cls .bst .tfm .pfb .map …</code>). Installed packages shadow the distribution and survive reloads.</p>
+  <div class="row"><button id="pkfiles">Choose files…</button><input type="file" id="pkpicker" multiple hidden>
+    <input id="pkurl" placeholder="https://host/path/layer.layer.json  (a layer served with HTTP Range)" size="48"><button id="pkmount">Add layer URL</button></div>
+  <pre id="pkmsg"></pre>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
 <div id="drop">Drop files to add them to the project</div>
 <script type="module">
 import { PdfView } from './viewer.js';
-import { Project, isText } from './project.js';
+import { Project, Packages, isText } from './project.js';
 import { parseProblems } from './problems.js';
 import { parseSynctex, inverse, forward } from './synctex.js';
 
@@ -264,6 +282,43 @@ function renderProblems() {
   renderGutter();
 }
 
+// ------------------------------------------------------------------------------------------ TeX distribution / packages
+let layers = [], distName = '', pendingInstalls = 0, holdCompile = false;
+const ARCHIVE = /\.(zip|tar|tgz|tar\.gz)$/i;
+function startAfterReady() { if (autoCompile) compile(); else setStatus(statusEl.textContent + ' — restarted; edit or press Compile'); autoCompile = true; }
+async function reinstall() {                                   // user packages survive reloads
+  const stored = await Packages.list();
+  if (!stored.length) return startAfterReady();
+  holdCompile = true; pendingInstalls = stored.length; setStatus(`installing ${stored.length} saved package${stored.length > 1 ? 's' : ''}…`);
+  for (const p of stored) worker.postMessage({ type: 'install', name: p.name, filename: p.filename, bytes: p.bytes, files: p.files });
+}
+function renderLayers() {
+  $('pkdist').textContent = distName ? `${distName} — ${layers.filter(l => !l.overlay).length} base layer(s); layers load file by file (HTTP Range), nothing is downloaded up front.` : '';
+  $('pklayers').innerHTML = layers.map(l => `<tr><td><b>${esc(l.name)}</b> <span class="pill">${l.overlay ? 'installed' : 'base'}</span></td><td>${l.files.toLocaleString()} files</td><td>${(l.bytes / 1048576).toFixed(1)} MB</td>
+    <td class="muted">${l.provides ? esc(l.provides.slice(0, 6).join(', ')) + (l.provides.length > 6 ? ' …' : '') : ''}</td><td>${l.overlay ? `<button class="small" data-rm="${esc(l.name)}">remove</button>` : ''}</td></tr>`).join('');
+  $('pklayers').querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
+    const name = b.dataset.rm; await Packages.save((await Packages.list()).filter(p => p.name !== name)); pendingInstalls = 1; worker.postMessage({ type: 'remove', name });
+  });
+}
+async function installFiles(fileList) {
+  const files = [...fileList]; if (!files.length) return;
+  let rec;
+  if (files.length === 1 && ARCHIVE.test(files[0].name)) {
+    rec = { name: files[0].name.replace(ARCHIVE, '').replace(/[^\w.+-]+/g, '-'), filename: files[0].name, bytes: new Uint8Array(await files[0].arrayBuffer()) };
+  } else {
+    const name = prompt('Name for this package:', files[0].name.replace(/\.[^.]+$/, '')); if (!name) return;
+    const o = {}; for (const f of files) o[f.name] = new Uint8Array(await f.arrayBuffer());
+    rec = { name: name.replace(/[^\w.+-]+/g, '-'), files: o };
+  }
+  const list = (await Packages.list()).filter(p => p.name !== rec.name); list.push(rec); await Packages.save(list);
+  $('pkmsg').textContent += `installing ${rec.name}…\n`; pendingInstalls = 1;
+  worker.postMessage({ type: 'install', ...rec });
+}
+$('pk').onclick = () => { renderLayers(); $('pkdlg').showModal(); };
+$('pkfiles').onclick = () => $('pkpicker').click();
+$('pkpicker').onchange = e => { installFiles(e.target.files); e.target.value = ''; };
+$('pkmount').onclick = () => { const u = $('pkurl').value.trim(); if (!u) return; pendingInstalls = 1; $('pkmsg').textContent += `mounting ${u}…\n`; worker.postMessage({ type: 'mount', url: u }); };
+
 // ------------------------------------------------------------------------------------------ compile
 function onMessage(ev) {
   const m = ev.data;
@@ -273,9 +328,14 @@ function onMessage(ev) {
   else if (m.type === 'ready') {
     ready = true; $('compile').disabled = false;
     setStatus(`engine ready (${(m.ms / 1000).toFixed(1)} s load, ${m.wasmKB} KB wasm; ${m.files.toLocaleString()} TeX files / ${m.packMB} MB fetched on demand${m.simd ? '; SIMD snapshots' : ''})`);
+    layers = m.layers; distName = m.dist; renderLayers();
     pushFiles(project.names());
-    if (autoCompile) compile(); else setStatus(statusEl.textContent + ' — restarted; edit or press Compile');
-    autoCompile = true;
+    reinstall();
+  } else if (m.type === 'installed' || m.type === 'removed' || m.type === 'mounted') {
+    layers = m.layers; renderLayers();
+    if (m.type === 'installed') { const i = m.info; $('pkmsg').textContent += `✓ ${m.name}: ${i.files} files (${i.note}${i.generated.length ? '; docstrip generated ' + i.generated.join(', ') : ''}${i.maps ? '; ' + i.maps + ' font map entries' : ''})` + (i.skipped.length ? `; ignored ${i.skipped.length} (docs/sources)` : '') + '\n'; }
+    if (pendingInstalls > 0) pendingInstalls--;
+    if (pendingInstalls === 0) { if (holdCompile) { holdCompile = false; startAfterReady(); } else compile(); }
   } else if (m.type === 'result') {
     busy = !m.final;
     if (m.synctex) { sxBytes = m.synctex; sx = null; }
@@ -296,6 +356,7 @@ function onMessage(ev) {
     if (!m.pdf && ne) document.querySelector('#tabs [data-p=problems]').click();
     if (m.final && dirty) { dirty = false; compile(); }
   } else if (m.type === 'error') {
+    if (pendingInstalls > 0) { pendingInstalls--; $('pkmsg').textContent += '✗ ' + m.message.split('\n')[0] + '\n'; if (pendingInstalls === 0 && holdCompile) { holdCompile = false; startAfterReady(); } return; }
     busy = false; setStatus(`<span class="err">${esc(m.message.split('\n')[0])}</span>`); $('log').textContent = m.message;
   }
 }
@@ -316,9 +377,11 @@ src.addEventListener('keydown', e => { if (e.key === 'Tab') { e.preventDefault()
 $('compile').onclick = compile;
 $('long').onclick = () => { addFile('long.tex', longSample()); project.main = 'long.tex'; openFile('long.tex'); compile(); };
 addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') compile(); });
-$('stop').onclick = () => { autoCompile = false; worker.terminate(); $('stop').hidden = true; busy = false; ready = false; $('compile').disabled = true; setStatus('engine stopped — restarting…'); worker = worker0(); worker.postMessage({ type: 'init' }); };
+$('stop').onclick = () => { autoCompile = false; worker.terminate(); $('stop').hidden = true; busy = false; ready = false; $('compile').disabled = true; setStatus('engine stopped — restarting…'); worker = worker0(); worker.postMessage(initMsg()); };
 
-worker = worker0(); worker.postMessage({ type: 'init' });
+const params = new URLSearchParams(location.search);
+const initMsg = () => ({ type: 'init', dist: params.get('dist') || undefined, layers: params.getAll('layer') });
+worker = worker0(); worker.postMessage(initMsg());
 renderFiles(); openFile(project.get(project.active) ? project.active : project.main);
 // ------------------------------------------------------------------------------------------ SyncTeX
 $('view').addEventListener('click', e => {                         // PDF -> source

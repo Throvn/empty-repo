@@ -10,7 +10,7 @@ function idb() {
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   });
 }
-async function kv(mode, fn) {
+export async function kv(mode, fn) {
   try { const db = await idb(); return await new Promise((res, rej) => { const t = db.transaction('kv', mode), s = t.objectStore('kv'), rq = fn(s); t.oncomplete = () => res(rq && rq.result); t.onerror = () => rej(t.error); }); }
   catch { return undefined; }            // private mode etc: just don't persist
 }
@@ -39,3 +39,9 @@ export class Project {
     return p;
   }
 }
+
+/** user-installed TeX packages (raw uploads, re-installed into the worker at start-up) */
+export const Packages = {
+  async list() { return (await kv('readonly', s => s.get('packages'))) || []; },
+  async save(list) { await kv('readwrite', s => s.put(list, 'packages')); },
+};

@@ -33,7 +33,7 @@ const FMT_DIRS = {
   enc: ['texmf/fonts/enc/'], map: ['texmf/fonts/map/'], fmt: ['fmt/', 'texmf/web2c/'],
   pool: ['texmf/web2c/'], web2c: ['texmf/web2c/'], pdftex: ['texmf/web2c/', 'texmf/tex/'],
   header: ['texmf/'], misc: ['texmf/fonts/'], sfd: ['texmf/fonts/sfd/'], cmap: ['texmf/fonts/cmap/'],
-  bst: ['texmf/bibtex/bst/'], bib: ['texmf/bibtex/bib/'],
+  bst: ['texmf/bibtex/bst/'], ist: ['texmf/makeindex/'], bib: ['texmf/bibtex/bib/'],
   pk: [], afm: ['texmf/fonts/afm/'], lig: ['texmf/fonts/lig/'],
 };
 // Every file a run writes (aux, toc, out, bbl, spl, tdo, glsdefs, hd, ... or a user's own \openout) exists for the next run,
@@ -71,6 +71,8 @@ export class HostFS {
     this.byPath = new Map();   // path -> entry
     this.byBase = new Map();   // basename -> [entry]
     this.dirs = new Set(['', '.', 'texmf']);
+    this.layerInfo = new Map();   // distribution layers: name -> {name, files, bytes, overlay}
+    this.gen = 0;                 // bumped whenever the set of system files changes (the engine then restarts cold)
   }
   /** cheap copy that shares the (immutable) system files but has its own user files: one engine per project */
   fork() {
@@ -82,15 +84,16 @@ export class HostFS {
       let l = f.byBase.get(base); if (!l) f.byBase.set(base, l = []); l.push(c);
     }
     f.dirs = new Set(this.dirs);
+    f.layerInfo = new Map(this.layerInfo); f.gen = this.gen;
     return f;
   }
-  _entry(path, user, mtime) {
+  _entry(path, user, mtime, front = false) {
     const old = this.byPath.get(path);
     if (old) return old;
     const e = new Entry(this.byId.length, path, user, mtime);
     this.byId.push(e); this.byPath.set(path, e);
     const base = path.slice(path.lastIndexOf('/') + 1);
-    let l = this.byBase.get(base); if (!l) this.byBase.set(base, l = []); l.push(e);
+    let l = this.byBase.get(base); if (!l) this.byBase.set(base, l = []); front ? l.unshift(e) : l.push(e);
     for (let i = path.indexOf('/'); i >= 0; i = path.indexOf('/', i + 1)) this.dirs.add(path.slice(0, i));
     return e;
   }
@@ -109,12 +112,46 @@ export class HostFS {
   addPack(data, meta) {
     for (const f of meta.files) this._add(f.filename.replace(/^\/+/, ''), data.subarray(f.start, f.end), false);
   }
-  /** same index, but bytes are fetched on first use through read(start, end) -> Uint8Array (synchronous) */
-  addLazyPack(read, meta) {
-    const lazy = (path, start, end) => { const e = this._entry(path, false, 1700000000); e._lazy = { start, end, read, cache: { d: null } }; };
-    if (meta.f) for (const [d, n, start, end] of meta.f) lazy(meta.d[d] ? meta.d[d] + '/' + n : n, start, end);     // compact index
-    else for (const f of meta.files) lazy(f.filename.replace(/^\/+/, ''), f.start, f.end);                         // file_packager's own
+  /**
+   * A distribution layer: a set of read-only TeX-tree files.  Layers are independent (mount, replace and unmount them at any time);
+   * a layer mounted with `maps` has its *.map files merged into pdftex.map (see dist.js refreshMaps); a layer mounted with `overlay` shadows files of earlier layers that have the same path *or* the same name in the same
+   * search tier -- exactly what adding a directory in front of TEXMF does.
+   *   files: Map<path, bytes>   or   {read(start, end) -> Uint8Array, meta: compact/file_packager index} (bytes fetched on first use)
+   */
+  mountLayer(name, src, { overlay = false, maps = false } = {}) {
+    if (this.layerInfo.has(name)) this.unmountLayer(name);
+    const info = { name, files: 0, bytes: 0, overlay, maps };
+    const put = (path, setup, size) => {
+      let e = this.byPath.get(path);
+      if (e && !e.user) {
+        if (!e.gone) (e.under ??= []).push({ layer: e.layer, _d: e._d, _lazy: e._lazy, mtime: e.mtime });
+        e.gone = false;
+      } else e = this._entry(path, false, 1700000000, overlay);
+      e.layer = name; e._d = null; e._lazy = null; e.bin = undefined; setup(e);
+      info.files++; info.bytes += size;
+    };
+    if (src instanceof Map) for (const [path, data] of src) put(path, e => { e._d = data; }, data.length);
+    else {
+      const { read, meta } = src;
+      const lazy = (path, start, end) => put(path, e => { e._lazy = { start, end, read, cache: { d: null } }; }, end - start);
+      if (meta.f) for (const [d, n, start, end] of meta.f) lazy(meta.d[d] ? meta.d[d] + '/' + n : n, start, end);        // compact index
+      else for (const f of meta.files) lazy(f.filename.replace(/^\/+/, ''), f.start, f.end);                          // file_packager's own
+    }
+    this.layerInfo.set(name, info); this.gen++;
+    return info;
   }
+  /** remove a layer; files it shadowed reappear */
+  unmountLayer(name) {
+    if (!this.layerInfo.has(name)) return false;
+    for (const e of this.byId) if (!e.user && e.layer === name) {
+      const u = e.under && e.under.pop();
+      if (u) { e.layer = u.layer; e._d = u._d; e._lazy = u._lazy; e.mtime = u.mtime; e.bin = undefined; }
+      else { e.gone = true; e._d = null; e._lazy = null; }
+    }
+    this.layerInfo.delete(name); this.gen++;
+    return true;
+  }
+  addLazyPack(read, meta, name = 'texlive') { return this.mountLayer(name, { read, meta }); }
   /** a small eagerly-loaded pack whose files are also in the lazy pack: seed their caches */
   seedFromPack(data, meta) {
     for (const f of meta.files) { const e = this.byPath.get(f.filename.replace(/^\/+/, '')); if (e && e._lazy) e._lazy.cache.d = data.subarray(f.start, f.end); }
@@ -223,6 +260,10 @@ export class TexEngine {
     if (o.bibtexWasm) {          // bibtex.wasm: a second, tiny engine on the same file system, run between pdfLaTeX passes
       e.bib = new TexEngine({ fs: o.fs, env: o.env, snapshotIntervalMs: 1e9 });
       await e.bib._instantiate(o.bibtexWasm); e.bib.incremental = false;
+    }
+    if (o.makeindexWasm) {       // makeindex.wasm: same idea (.idx -> .ind, glossaries' .glo -> .gls, nomencl's .nlo -> .nls)
+      e.mi = new TexEngine({ fs: o.fs, env: o.env, snapshotIntervalMs: 1e9 });
+      await e.mi._instantiate(o.makeindexWasm); e.mi.incremental = false;
     }
     return e;
   }
@@ -471,12 +512,14 @@ export class TexEngine {
     for (const e of this.fs.userEntries()) if (!seen.has(e.path) && !e.carried) this.fs.removeUserFile(e.path);
     if (this.lastArgs && this.lastArgs.join('\0') !== argv.join('\0')) { this.lastFiles = null; }   // different command: start over
     this.lastArgs = argv;
+    // a layer was mounted/unmounted since the last run: file lookups may resolve differently, so no snapshot can be trusted
+    if (this._fsGen !== this.fs.gen) { this._fsGen = this.fs.gen; this.lastFiles = null; this.result = null; this._bibKey = null; this._miKeys = null; this.snapshots = []; }
 
     const passes = []; let converged = true;
     for (let pass = 0; pass < maxPasses; pass++) {
       // BibTeX's inputs (.bib/.bst, or citations changed by the last pass) may have changed without any LaTeX read noticing,
       // e.g. an edited .bib: refresh the .bbl first, then the planner sees *that* as the change and rolls back to before it is read
-      this._runBibtex(job);
+      this._runBibtex(job); this._runMakeindex();
       const plan = this._plan();
       const p0 = now();
       if (plan.mode === 'cached') { passes.push({ mode: 'cached', ms: now() - p0 }); break; }
@@ -484,9 +527,9 @@ export class TexEngine {
       this.lastFiles = new Map(this.fs.userEntries().map(e => [e.path, e.data]));
       const exit = plan.mode === 'cold' ? this.run(argv) : this._resume(plan.snap);
       let changed = this._carryAuxFiles();
-      const bibChanged = this._runBibtex(job);
-      changed = changed || bibChanged;
-      this.result = { exit, pdf: this.getFile(job + '.pdf'), log: this.getFile(job + '.log'), bibtexLog: this.bibLog || '', synctex: synctex ? this.getFile(job + '.synctex') : null };
+      const bibChanged = this._runBibtex(job), miChanged = this._runMakeindex();
+      changed = changed || bibChanged || miChanged;
+      this.result = { exit, pdf: this.getFile(job + '.pdf'), log: this.getFile(job + '.log'), bibtexLog: (this.bibLog || '') + (this.miLog || ''), synctex: synctex ? this.getFile(job + '.synctex') : null };
       passes.push({ mode: plan.mode, firstBad: plan.firstBad, resumedAtEvent: plan.snap ? plan.snap.traceLen : 0,
                     events: this.trace.length, snapshotsHeld: this.snapshots.length, ms: now() - p0 });
       converged = !changed;
@@ -553,6 +596,42 @@ export class TexEngine {
     if (old && bytesEqual(old.data, bbl)) return false;
     this.fs.setUserFile(job + '.bbl', bbl).carried = true;
     return true;
+  }
+
+  /**
+   * Index processors, run like BibTeX between passes: `makeindex job.idx` (\\makeindex / \\printindex, imakeidx, makeidx),
+   * glossaries' `makeindex -s job.ist -t job.glg -o job.gls job.glo` and nomencl's `makeindex -s nomencl.ist -o job.nls job.nlo`
+   * (what makeglossaries / the nomencl instructions run by hand).  Only reruns when its input or style changed.
+   * Returns true when an output file changed.
+   */
+  _runMakeindex() {
+    if (!this.mi) return false;
+    const keys = (this._miKeys ??= new Map()); let changed = false;
+    this.miLog = '';
+    for (const e of [...this.fs.userEntries()]) {
+      const m = /^(.*)\.(idx|glo|nlo)$/.exec(e.path); if (!m) continue;
+      const [, base, ext] = m, out = { idx: 'ind', glo: 'gls', nlo: 'nls' }[ext], lg = { idx: 'ilg', glo: 'glg', nlo: 'nlg' }[ext];
+      const ist = this.fs.lookup(base + '.ist');
+      const args = ['makeindex'];
+      if (ext === 'idx' && ist) args.push('-s', base + '.ist');
+      if (ext === 'glo') { if (ist) args.push('-s', base + '.ist'); args.push('-t', base + '.glg', '-o', base + '.gls'); }
+      if (ext === 'nlo') args.push('-s', 'nomencl.ist', '-o', base + '.nls');
+      args.push(e.path);
+      const key = args.join(' ') + hashBytes(e.data) + (ist ? hashBytes(ist.data) : '');
+      if (keys.get(e.path) === key) continue;
+      keys.set(e.path, key);
+      const x = this.mi;
+      x._resetTo(x.initSnap); x.trace = []; x.stdout = []; x.snapshots = [];
+      x._start(args);
+      const log = x.getFile(base + '.' + lg);
+      this.miLog += `\n===== makeindex ${e.path} =====\n` + (log ? dec.decode(log) : x.consoleOutput);
+      const o = x.getFile(base + '.' + out);
+      if (!o) continue;
+      const old = this.fs.lookup(base + '.' + out);
+      if (old && bytesEqual(old.data, o)) continue;
+      this.fs.setUserFile(base + '.' + out, o).carried = true; changed = true;
+    }
+    return changed;
   }
 
   /** Copy cross-reference files the engine wrote into the host FS for the next run. Returns true if any changed. */

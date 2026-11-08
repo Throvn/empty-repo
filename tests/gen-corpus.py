@@ -547,3 +547,17 @@ project('proj-write-then-input', r'\documentclass{article}\begin{document}\immed
 
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'gen-corpus-real.py')).read())   # realistic composite documents
 print(f'{n} corpus documents written to {OUT}')
+
+# ------------------------------------------------------------------ makeindex.wasm between pdfLaTeX passes
+IDX = ''.join(r'\index{%s}%s ' % (k, k) for k in ['zebra', 'apple', 'apple!pie', 'apple!tart', 'Banana@\\textbf{Banana}', 'cherry|textbf', 'cherry|see{apple}', 'date', 'zebra'])
+D('idx-makeidx', IDX + r'\newpage\printindex', r'\usepackage{makeidx}\makeindex')
+D('idx-makeidx-2col', IDX + r'\printindex', r'\usepackage{makeidx,multicol}\makeindex', cls='book')
+D('idx-imakeidx', IDX + r'\printindex', r'\usepackage{imakeidx}\makeindex[title=My Index,columns=2]')
+D('idx-imakeidx-multi', r'\index[names]{Knuth}\index[subj]{TeX}\index[names]{Lamport}\printindex[names]\printindex[subj]', r'\usepackage{imakeidx}\makeindex[name=names,title=Names]\makeindex[name=subj,title=Subjects]')
+D('idx-style-file', IDX + r'\printindex', r'\usepackage{makeidx}\makeindex', files={'main.ist': 'heading_prefix "{\\\\bfseries "\nheading_suffix "}\\\\nopagebreak\\n"\nheadings_flag 1\ndelim_0 " -- "\n'})
+D('idx-empty', 'no entries' + r'\printindex', r'\usepackage{makeidx}\makeindex')
+D('idx-bad-entry', r'\index{a!!b}x \index{|}y \index{@}z\printindex', r'\usepackage{makeidx}\makeindex')
+D('idx-pages', ''.join(r'\index{item%d}Item %d\newpage ' % (i % 3, i) for i in range(12)) + r'\printindex', r'\usepackage{makeidx}\makeindex')
+D('idx-glossaries', r'\gls{tex} and \gls{latex}\printglossaries', r'\usepackage[nomain,toc=false]{glossaries}\makeglossaries\newglossaryentry{tex}{name=TeX,description={A typesetting system}}\newglossaryentry{latex}{name=LaTeX,description={Macro package}}')
+D('idx-glossaries-acr', r'\gls{ac} \gls{ac} \printglossary[type=\acronymtype]', r'\usepackage[acronym]{glossaries}\makeglossaries\newacronym{ac}{AC}{A Compiled Thing}')
+D('idx-nomencl', r'\nomenclature{$\alpha$}{Angle}\nomenclature{$c$}{Speed of light}\printnomenclature', r'\usepackage{nomencl}\makenomenclature')

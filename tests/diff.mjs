@@ -10,12 +10,13 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
-const filt = args.find(a => !a.startsWith('-') && !/^\d+$/.test(a)) || '';
+const filt = args.find((a, i) => !a.startsWith('-') && !/^\d+$/.test(a) && args[i - 1] !== '--dir') || '';
 const jobs = +(args[args.indexOf('-j') + 1] || 4) || 4;
-const gen = path.join(here, '..', 'build', 'corpus');
-if (!fs.existsSync(gen)) execFileSync('python3', [path.join(here, 'gen-corpus.py'), gen], { stdio: 'inherit' });
+const dirArg = args.indexOf('--dir') >= 0 ? path.resolve(args[args.indexOf('--dir') + 1]) : null;     // e.g. build/pkgcorpus (tests/packages.mjs)
+const gen = dirArg || path.join(here, '..', 'build', 'corpus');
+if (!dirArg && !fs.existsSync(gen)) execFileSync('python3', [path.join(here, 'gen-corpus.py'), gen], { stdio: 'inherit' });
 const cases = [];
-for (const dir of [path.join(here, 'corpus'), gen]) for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+for (const dir of dirArg ? [gen] : [path.join(here, 'corpus'), gen]) for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
   if (e.name === 'assets') continue;
   if ((e.isDirectory() || e.name.endsWith('.tex')) && e.name.includes(filt)) cases.push(path.join(dir, e.name));
 }
@@ -42,8 +43,8 @@ await Promise.all(Array.from({ length: jobs }, worker));
 console.log(`\n${fail ? fail + ' FAILED of ' : 'all '}${cases.length} cases${fail ? '' : ' identical to native pdftex'}`);
 const gaps = new Map();
 for (const r of results) for (const g of r.gaps || []) { if (!gaps.has(g)) gaps.set(g, []); gaps.get(g).push(r.name.replace(/\.tex$/, '')); }
-const expectedGap = /missing|nonexist|doesnotexist|notpng|xyz|bad|cyr|greek|klingon|nosuch/i;
+const expectedGap = /missing|nonexist|doesnotexist|notpng|xyz|bad|cyr|greek|klingon|nosuch|^(bbm\d|cccsc|larm)/i;      // (bbm, concrete, LH: Metafont-only fonts)
 const real = [...gaps].filter(([g, docs]) => !docs.every(d => expectedGap.test(d) || expectedGap.test(g)));
 if (real.length) { console.log('\nTeX-tree gaps (needed by a document but not in the pack):'); for (const [g, docs] of real) console.log('  ', g.padEnd(28), docs.slice(0, 4).join(', ') + (docs.length > 4 ? ` (+${docs.length - 4})` : '')); }
-fs.writeFileSync(path.join(here, '..', 'build', 'diff-results.json'), JSON.stringify(results, null, 1));
+fs.writeFileSync(path.join(here, '..', 'build', dirArg ? path.basename(dirArg) + '-results.json' : 'diff-results.json'), JSON.stringify(results, null, 1));
 process.exit(fail ? 1 : 0);

@@ -9,6 +9,7 @@ export const ENV = { SOURCE_DATE_EPOCH: '1700000000', FORCE_SOURCE_DATE: '1' };
 const REF = path.join(ROOT, 'build/native-ref');
 const NATIVE = path.join(ROOT, 'build/native-ref/pdflatex');
 const BIBTEX = path.join(ROOT, 'build/native-ref/bibtex');
+const MAKEINDEX = path.join(ROOT, 'build/native-ref/makeindex');
 function hashBytes(b) { let h = 2166136261; for (let i = 0; i < b.length; i++) h = Math.imul(h ^ b[i], 16777619); return (h >>> 0).toString(16) + ':' + b.length; }
 const NO_CARRY = /\.(pdf|log|dvi|xdv|fmt|synctex(\.gz)?)$/;   // everything else a run writes is an input of the next one
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -41,11 +42,28 @@ export function nativeCompile(files, { main = 'main.tex', passes = 3, extraArgs 
     bibKey = key;
     spawnSync(BIBTEX, [job], { maxBuffer: 1 << 28, cwd: W, env: { ...process.env, ...ENV, TEXMFCNF: REF }, timeout: 60000 });
   };
+  const miKeys = new Map();
+  const makeindex = () => {         // same rule as TexEngine._runMakeindex
+    for (const f of fs.readdirSync(W)) {
+      const m = /^(.*)\.(idx|glo|nlo)$/.exec(f); if (!m) continue;
+      const [, base, ext] = m, out = { idx: 'ind', glo: 'gls', nlo: 'nls' }[ext], lg = { idx: 'ilg', glo: 'glg', nlo: 'nlg' }[ext];
+      const ist = fs.existsSync(W + '/' + base + '.ist');
+      const a = [];
+      if (ext === 'idx' && ist) a.push('-s', base + '.ist');
+      if (ext === 'glo') { if (ist) a.push('-s', base + '.ist'); a.push('-t', base + '.glg', '-o', base + '.gls'); }
+      if (ext === 'nlo') a.push('-s', 'nomencl.ist', '-o', base + '.nls');
+      a.push(f);
+      const key = ['makeindex', ...a].join(' ') + hashBytes(fs.readFileSync(W + '/' + f)) + (ist ? hashBytes(fs.readFileSync(W + '/' + base + '.ist')) : '');
+      if (miKeys.get(f) === key) continue; miKeys.set(f, key);
+      spawnSync(MAKEINDEX, a, { maxBuffer: 1 << 26, cwd: W, env: { ...process.env, ...ENV, TEXMFCNF: REF }, timeout: 60000 });
+    }
+  };
   for (let p = 0; p < passes; p++) {
+    makeindex();
     const before = snap();
     const r = spawnSync(ini ? NATIVE.replace(/pdflatex$/, 'pdftex') : NATIVE, args, { maxBuffer: 1 << 28, cwd: W, env: { ...process.env, ...ENV, TEXMFCNF: REF }, timeout: 120000 });
     exit = r.status ?? -1;
-    bibtex();
+    bibtex(); makeindex();
     if (JSON.stringify(snap()) === JSON.stringify(before)) break;
   }
   const rd = f => (fs.existsSync(W + '/' + f) ? new Uint8Array(fs.readFileSync(W + '/' + f)) : null);
@@ -63,6 +81,8 @@ export function wasmCompile(engine, files, { main = 'main.tex', passes = 3, ini 
   const r = engine.compile(files, { main, maxPasses: passes, ...(ini ? { argv: ['pdftex', '-ini', '-interaction=nonstopmode', '-file-line-error', main] } : {}), ...o });
   const outputs = {};
   for (const f of engine.listFiles()) outputs[f.name] = engine.getFile(f.name);
+  if (engine.mi) for (const e of engine.fs.userEntries()) if (e.carried && /\.(ind|ilg|gls|glg|nls|nlg)$/.test(e.path)) outputs[e.path] = e.data;      // makeindex's results (one run per index; the .ilg is not carried)
+  if (engine.mi) for (const f of engine.mi.listFiles()) outputs[f.name] ??= engine.mi.getFile(f.name);
   if (engine.bib) for (const f of engine.bib.listFiles()) outputs[f.name] = engine.bib.getFile(f.name);      // bibtex's .bbl / .blg
   for (const k of Object.keys(files)) delete outputs[k];       // inputs the run overwrote are not 'new outputs' (same rule as the native side)
   const rawLog = outputs[main.replace(/\.tex$/, '') + '.log'];

@@ -3,7 +3,7 @@
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
 SRC="$WORK/src/texlive/texk/web2c"; KP="$WORK/src/texlive/texk"
-ENGINE="${ENGINE:-pdftex}"            # pdftex (the product) | bibtex | tex, etex (for the trip / e-trip tests)
+ENGINE="${ENGINE:-pdftex}"            # pdftex (the product) | bibtex | makeindex | tex, etex (for the trip / e-trip tests)
 GEN="$WORK/gen"; OBJ="$WORK/wasm/obj-$ENGINE"; OUT="$WORK/wasm"
 OPT="${OPT:--O2}"
 mkdir -p "$OBJ" "$WORK/wasm/inc/w2c" "$WORK/wasm/inc/kpathsea"
@@ -46,6 +46,8 @@ if [ "$ENGINE" = tex ]; then
 elif [ "$ENGINE" = bibtex ]; then
   add bibtex "$GEN/bibtex.c"
   add lib_main "$SRC/lib/main.c"
+elif [ "$ENGINE" = makeindex ]; then       # plain C (texk/makeindexk), no web2c involved
+  for f in genind mkind qsort scanid scanst sortid; do add mi_$f "$KP/makeindexk/$f.c" -I"$KP/makeindexk" -I"$WORK/native/texk/makeindexk"; done
 elif [ "$ENGINE" = etex ]; then
   for f in etexini etex0 etex-pool; do add $f "$GEN/$f.c"; done
   add etexextra "$SRC/etexdir/etexextra.c"
@@ -85,19 +87,21 @@ else
   add pdftexdir_pdftoepdf "$SRC/pdftexdir/pdftoepdf.cc" "${XPF[@]}"
   for f in png_glue; do add $f "$ROOT/src/$f.c"; done
 fi
+if [ "$ENGINE" != makeindex ]; then
 for f in basechsuffix chartostring coredump eofeoln fprintreal input2int inputint openclose \
          printversion setupvar uexit usage version zround; do
   add lib_$f "$SRC/lib/$f.c"
 done
+fi
 # our own replacements: kpathsea, vfs, entry glue
-if [ "$ENGINE" = bibtex ]; then add entry "$ROOT/src/entry.c" -DNO_INPUT_LINE_HOOK; for f in vfs mini_kpse; do add $f "$ROOT/src/$f.c"; done
+if [ "$ENGINE" = bibtex ] || [ "$ENGINE" = makeindex ]; then add entry "$ROOT/src/entry.c" -DNO_INPUT_LINE_HOOK; for f in vfs mini_kpse; do add $f "$ROOT/src/$f.c"; done
 else for f in vfs mini_kpse entry; do add $f "$ROOT/src/$f.c"; done; fi
 add snap "$ROOT/src/snap.c" -msimd128      # SIMD chunk diff for snapshots
 
 xargs -d '\n' -P "$(nproc)" -I{} bash -c '{}' < "$JOBS"
 
 WRAPS=""
-for s in png_create_read_struct fileno fopen fopen64 stat lstat stat64 lstat64 access remove unlink rename getcwd mkdir popen pclose system $([ "$ENGINE" != bibtex ] && echo input_line); do
+for s in png_create_read_struct fileno fopen fopen64 stat lstat stat64 lstat64 access remove unlink rename getcwd mkdir popen pclose system $([ "$ENGINE" != bibtex ] && [ "$ENGINE" != makeindex ] && echo input_line); do
   WRAPS="$WRAPS -Wl,--wrap=$s"
 done
 
@@ -105,7 +109,7 @@ emcc $OPT "${objs[@]}" -o "$OUT/$ENGINE.wasm" $WRAPS \
   --no-entry -sSTANDALONE_WASM=1 -sFILESYSTEM=0 \
   -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=536870912 -sMAXIMUM_MEMORY=2147483648 -sSTACK_SIZE=4194304 \
   -sEXPORTED_FUNCTIONS=_tex_run,_tex_args_ptr,_asyncify_data_ptr,_asyncify_data_reset,_sp_get,_sp_set,_heap_top,_snap_shadow_lo,_snap_shadow_hi,_snap_list_ptr,_snap_capacity,_snap_copy,_snap_diff,_vfs_count,_vfs_name,_vfs_data,_vfs_len,_vfs_find_index,_malloc,_free \
-  $([ "$ENGINE" = bibtex ] && echo "-sSUPPORT_LONGJMP=wasm" || echo "-sASYNCIFY=1 -sASYNCIFY_IMPORTS=host_snapshot -sASYNCIFY_IGNORE_INDIRECT=1") \
+  $([ "$ENGINE" = bibtex ] || [ "$ENGINE" = makeindex ] && echo "-sSUPPORT_LONGJMP=wasm" || echo "-sASYNCIFY=1 -sASYNCIFY_IMPORTS=host_snapshot -sASYNCIFY_IGNORE_INDIRECT=1") \
   -sERROR_ON_UNDEFINED_SYMBOLS=1
 mkdir -p "$WORK/web" && cp "$OUT/$ENGINE.wasm" "$WORK/web/$ENGINE.wasm"
 ls -la "$WORK/web/$ENGINE.wasm"
