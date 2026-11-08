@@ -35,6 +35,16 @@ web: $(STAMP)/web
 $(STAMP)/web: $(STAMP)/fmt $(wildcard web/*.js web/*.html) scripts/70-package-web.sh
 	scripts/70-package-web.sh && touch $@
 
+engines: $(STAMP)/engines                      # tex.wasm, etex.wasm: only for the trip tests
+$(STAMP)/engines: $(STAMP)/native scripts/30-build-wasm.sh $(wildcard src/*.c src/*.h)
+	ENGINE=tex scripts/30-build-wasm.sh && ENGINE=etex scripts/30-build-wasm.sh && touch $@
+
+trip: engines                                   # Knuth's TRIP test on tex.wasm, e-TRIP on etex.wasm and pdftex.wasm
+	node tests/trip.mjs && node tests/etrip.mjs && ENGINE=pdftex node tests/etrip.mjs
+
+diff: web                                       # differential corpus: byte-identical to native pdftex
+	scripts/65-native-ref.sh >/dev/null && node tests/diff.mjs
+
 test: web
 	node tests/incremental.mjs && node tests/errors.mjs
 
@@ -49,4 +59,4 @@ clean:
 distclean:
 	rm -rf build
 
-.PHONY: all toolchain sources native wasm texlive fmt web test bench serve clean distclean
+.PHONY: engines trip diff all toolchain sources native wasm texlive fmt web test bench serve clean distclean

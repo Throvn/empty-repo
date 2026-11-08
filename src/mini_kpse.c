@@ -108,6 +108,7 @@ static const struct { const char *name, *value; } params[] = {
 string kpse_var_value(const_string var) {
   const char *e = getenv(var);
   if (e && *e) return xstrdup(e);
+  if (getenv("MINIKPSE_STRICT")) return NULL;      /* only the environment: compile-time defaults (trip test) */
   for (int i = 0; params[i].name; i++) if (!strcmp(params[i].name, var)) return xstrdup(params[i].value);
   return NULL;
 }

@@ -172,6 +172,8 @@ export class TexEngine {
     this.fs = fs;
     this.env = { ...env };
     this.stdout = [];           // text chunks written to fd 1/2
+    this.stdin = null; this.stdinPos = 0;   // optional terminal input (fd 0), e.g. for the trip test
+    this.rawOut = null;         // set to [] to capture exact stdout bytes
     this.snapshots = [];        // chronological, each valid for the trace prefix [0, traceLen)
     this.trace = [];            // events that depend on user files: {k:'find'|'read', ...}
     this.incremental = true;
@@ -208,13 +210,24 @@ export class TexEngine {
           new DataView(self.mem.buffer).setBigUint64(out, ns, true); return 0;
         },
         fd_close: () => 0,
-        fd_read: (fd, iov, n, out) => { new DataView(self.mem.buffer).setUint32(out, 0, true); return 0; },
+        fd_read: (fd, iov, n, out) => {               // fd 0 = the host-provided terminal input (engine.stdin)
+          const dv = new DataView(self.mem.buffer); let total = 0;
+          if (fd === 0 && self.stdin) for (let i = 0; i < n && self.stdinPos < self.stdin.length; i++) {
+            const p = dv.getUint32(iov + 8 * i, true), l = dv.getUint32(iov + 8 * i + 4, true);
+            const k = Math.min(l, self.stdin.length - self.stdinPos);
+            new Uint8Array(self.mem.buffer, p, k).set(self.stdin.subarray(self.stdinPos, self.stdinPos + k));
+            self.stdinPos += k; total += k;
+          }
+          dv.setUint32(out, total, true); return 0;
+        },
         fd_seek: () => 70,
         fd_write: (fd, iov, n, out) => {
           const dv = new DataView(self.mem.buffer); let total = 0, s = '';
           for (let i = 0; i < n; i++) {
             const p = dv.getUint32(iov + 8 * i, true), l = dv.getUint32(iov + 8 * i + 4, true);
-            s += dec.decode(new Uint8Array(self.mem.buffer, p, l), { stream: true }); total += l;
+            const bytes = new Uint8Array(self.mem.buffer, p, l);
+            if (self.rawOut && fd === 1) self.rawOut.push(bytes.slice());
+            s += dec.decode(bytes, { stream: true }); total += l;
           }
           self.stdout.push(s); dv.setUint32(out, total, true); return 0;
         },
